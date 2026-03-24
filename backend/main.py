@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from agent.retriver_service import Retriver
 from agent.pdf_image_process import process_documents
 from agent.vision_magic_fill import analyze_with_gemini_vision
+from agent.structured_data_filling import extract_form_data
 import google.generativeai as genai
 import shutil
 import json
@@ -46,20 +47,21 @@ class VisionMagicFillRequest(BaseModel):
 
 
 @app.post("/upload")
-async def upload_files(files: list[UploadFile] = File(...)):
+async def upload_files(files: list[UploadFile] = File(..., description="Upload multiple files")):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+    
     saved_files = []
     processable_files = []
     supported_extensions = ('.pdf', '.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif', '.txt', '.md')
     
     for file in files:
-        file_path = UPLOAD_DIR / file.filename
-        with open(file_path, "wb") as f:
+        # Save to user_details folder
+        user_details_path = UPLOAD_DIR / file.filename
+        with open(user_details_path, "wb") as f:
             content = await file.read()
             f.write(content)
         saved_files.append(file.filename)
-        
-        public_file_path = PUBLIC_DIR / file.filename
-        shutil.copy2(file_path, public_file_path)
         
         if file.filename.lower().endswith(supported_extensions):
             processable_files.append(file.filename)
@@ -67,11 +69,12 @@ async def upload_files(files: list[UploadFile] = File(...)):
     if processable_files:
         try:
             result = await process_documents()
+            
             return {
                 "message": "Upload completed and documents processed",
                 "files": saved_files,
                 "processed_files": processable_files,
-                "processing_result": result
+                "extracted_data_saved": "public/user_data.txt"
             }
         except Exception as e:
             return {
@@ -114,11 +117,10 @@ async def view_file(filename: str):
 @app.post("/vision-magicfill")
 async def vision_magic_fill(request: VisionMagicFillRequest):
     """
-    Magic Fill: screenshot + fields → Gemini Vision → labeled fields
+    Single endpoint: screenshot + fields → structured LLM extraction → fill_data
     """
     print(f"\n{'='*50}")
     print(f"Vision Magic Fill - {len(request.fields)} fields received")
-    print(f"URL: {request.url}")
     print(f"{'='*50}")
 
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -140,16 +142,117 @@ async def vision_magic_fill(request: VisionMagicFillRequest):
             merged["label"] = label_map.get(field["index"])
             merged_fields.append(merged)
 
-        print(f"\n{'='*50}")
-        print(f"MERGED FIELDS (after Gemini Vision labeling):")
-        print(json.dumps(merged_fields, indent=2))
-        print(f"{'='*50}\n")
+        # Step 3: Filter fillable fields
+        fillable_fields = []
+        skip_keywords = ['captcha', 'password', 'otp', 'confirm', 'security']
         
+        for field in merged_fields:
+            field_id = (field.get('id') or '').lower()
+            field_name = (field.get('name') or '').lower()
+            label = (field.get('label') or '').lower()
+            field_type = field.get('type', '')
+            
+            if any(kw in field_id or kw in field_name or kw in label for kw in skip_keywords):
+                continue
+            if field.get('width', 0) == 0 or field.get('height', 0) == 0:
+                continue
+            if field_type == 'checkbox':
+                continue
+                
+            fillable_fields.append(field)
+
+        print(f"Fillable fields: {len(fillable_fields)}")
+
+        # Step 4: Use structured LLM extraction
+        extraction_result = await extract_form_data(fillable_fields)
+        extracted_data = extraction_result.get('extracted', {})
+        field_results = extraction_result.get('fields', [])
+        
+        print(f"Extracted data: {json.dumps(extracted_data, indent=2)}")
+
+        # Step 5: Build fill_data
+        fill_data = []
+        
+        def format_value(val, field_id: str, label: str, field_type: str = 'text') -> str:
+            """Format value based on field hints"""
+            if val is None or val == "null" or val == "":
+                return None
+            
+            val_str = str(val)
+            label_lower = label.lower()
+            field_id_lower = field_id.lower() if field_id else ""
+            
+            # Aadhaar: remove spaces, keep only digits
+            if 'aadhaar' in label_lower or 'uid' in field_id_lower or 'aadhar' in label_lower:
+                return ''.join(c for c in val_str if c.isdigit())
+            
+            # Mobile/Phone: digits only
+            if 'mobile' in label_lower or 'phone' in label_lower:
+                return ''.join(c for c in val_str if c.isdigit())
+            
+            # Pincode: digits only
+            if 'pin' in label_lower or 'zip' in label_lower:
+                return ''.join(c for c in val_str if c.isdigit())
+            
+            # Date fields - convert DD/MM/YYYY to YYYY-MM-DD if field type is 'date'
+            if field_type == 'date':
+                import re
+                match = re.match(r'(\d{1,2})/(\d{1,2})/(\d{4})', val_str)
+                if match:
+                    day, month, year = match.groups()
+                    return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+            
+            return val_str
+
+        for field_result in field_results:
+            field = field_result['field']
+            value = field_result['value']
+            
+            field_id = field.get('id')
+            label = field.get('label', '').replace(' *', '').strip()
+            field_type = field.get('type')
+            tag = field.get('tag')
+            options = field.get('options')
+            
+            if not field_id or value is None:
+                continue
+            
+            # Handle radio buttons
+            if field_type == 'radio':
+                label_lower = label.lower()
+                value_lower = str(value).lower()
+                
+                # Click if the extracted value matches this radio option
+                if value_lower == label_lower or value_lower in label_lower or label_lower in value_lower:
+                    fill_data.append({"id": field_id, "action": "click"})
+                # Also handle boolean true for gender radios
+                elif value is True or value == "true":
+                    fill_data.append({"id": field_id, "action": "click"})
+                continue
+            
+            # Handle SELECT - match to option value
+            if tag == 'SELECT' and options:
+                val_str = str(value).lower()
+                for opt in options:
+                    if opt['value'] != '-1':
+                        opt_label = opt['label'].lower()
+                        if val_str == opt_label or val_str in opt_label or opt_label in val_str:
+                            fill_data.append({"id": field_id, "value": opt['value'], "action": "select"})
+                            break
+                continue
+            
+            # Format and add text input
+            formatted_value = format_value(value, field_id, label, field_type)
+            if formatted_value:
+                fill_data.append({"id": field_id, "value": formatted_value, "action": "fill"})
+
+        print(f"\nFILL DATA FOR PLAYWRIGHT:")
+        print(json.dumps(fill_data, indent=2))
+
         return {
             "success": True,
-            "message": f"Found {len(merged_fields)} fields with labels",
-            "fields": merged_fields,
-            "fill_data": []  # Empty for now - not filling yet
+            "fill_data": fill_data,
+            "extracted": extracted_data
         }
 
     except Exception as e:

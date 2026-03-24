@@ -1,31 +1,26 @@
 ---------------------------------------
 PERSONAL INFORMATION SUMMARY
 
-Name: Minu Sri M
-Date of Birth: 04/05/1998
-Gender: Female
-Father's Name: Mari Arumugan
+Name: Anjali
+Date of Birth: 18/09/1999
+Gender: FEMALE
+Father's Name: Mukesh Kumar
 
 IDENTITY DETAILS
 
-Aadhaar Number: 7961 8948 9007
+Aadhaar Number: 2268 1622 3671
 
 CONTACT & ADDRESS DETAILS
 
-Permanent Address: C/O Mari Arumugan, CHAMAPARABU HOUSE, ANIKODE, Chittur Pg, Palakkad, Kerala - 678101
-District: Palakkad
-State: Kerala
-Pincode: 678101
+Mobile Number: 9582539507
+Permanent Address: D/O Mukesh Kumar H. No. E - 376 Street No. 15 Ashok Nagar Shahdara Mandoli Saboli North East Delhi - 110093
+District: North East Delhi
+State: Delhi
+Pincode: 110093
 
 PROFESSIONAL & FINANCIAL DETAILS
 
-Educational Qualification: B.Sc. Computer Science
-Institution / University: University of Calicut
-Occupation: Student
-Bank Account Number: 123456789012
-IFSC Code: SBIN0001234
 
 EMERGENCY CONTACT DETAILS
 
-Relationship: Father
 ---------------------------------------

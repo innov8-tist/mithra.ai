@@ -73,9 +73,9 @@ function ChromeSandbox() {
             fillData: data.fill_data,
           });
 
-          setMagicFillStatus(`✅ Found ${data.fields.length} form fields`);
+          setMagicFillStatus(`✅ ${fillResult}`);
         } else {
-          setMagicFillStatus('No fields found');
+          setMagicFillStatus('No matching data found in your documents');
         }
       } else {
         setMagicFillStatus(`Failed: ${response.statusText}`);
