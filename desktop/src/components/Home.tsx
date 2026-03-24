@@ -2,7 +2,11 @@ import { MessageSquare, FileText, Grid } from 'lucide-react';
 import Card from './Card';
 import QuickActions from './QuickActions';
 
-export default function Home() {
+interface HomeProps {
+  onNavigate: (view: string) => void;
+}
+
+export default function Home({ onNavigate }: HomeProps) {
   return (
     <div className="flex-1 flex items-center justify-center p-8">
       {/* Radial Glow Background */}
@@ -34,19 +38,19 @@ export default function Home() {
             icon={MessageSquare}
             title="Talk to Assistant"
             description="Ask questions or get things done"
-            onClick={() => console.log('Navigate to Assistant')}
+            onClick={() => onNavigate('assistant')}
           />
           <Card
             icon={FileText}
             title="My Documents"
             description="Upload and manage your documents"
-            onClick={() => console.log('Navigate to Documents')}
+            onClick={() => onNavigate('documents')}
           />
           <Card
             icon={Grid}
             title="My Applications"
             description="Track your submissions"
-            onClick={() => console.log('Navigate to Applications')}
+            onClick={() => onNavigate('applications')}
           />
         </div>
 

@@ -1,4 +1,4 @@
-import { FileText, CheckCircle, Loader, AlertCircle, MoreVertical } from 'lucide-react';
+import { FileText, CheckCircle, Loader, AlertCircle, Download } from 'lucide-react';
 
 interface Document {
   id: string;
@@ -10,9 +10,10 @@ interface Document {
 interface DocumentCardProps {
   document: Document;
   index: number;
+  onDownload: (filename: string) => void;
 }
 
-export default function DocumentCard({ document, index }: DocumentCardProps) {
+export default function DocumentCard({ document, index, onDownload }: DocumentCardProps) {
   const statusConfig = {
     ready: {
       icon: CheckCircle,
@@ -38,8 +39,9 @@ export default function DocumentCard({ document, index }: DocumentCardProps) {
   const StatusIcon = status.icon;
 
   return (
-    <div
-      className="group relative bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-6 hover:bg-white/8 hover:shadow-[0_8px_30px_rgba(59,130,246,0.2)] hover:border-blue-500/30 transition-all duration-300 animate-fadeInUp"
+    <button
+      onClick={() => onDownload(document.name)}
+      className="group relative bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl p-6 hover:bg-white/8 hover:shadow-[0_8px_30px_rgba(59,130,246,0.2)] hover:border-blue-500/30 transition-all duration-300 animate-fadeInUp text-left w-full"
       style={{ animationDelay: `${index * 100}ms` }}
     >
       {/* Icon Container */}
@@ -59,10 +61,16 @@ export default function DocumentCard({ document, index }: DocumentCardProps) {
         <span className="text-xs font-medium">{status.label}</span>
       </div>
 
-      {/* More Options */}
-      <button className="absolute top-4 right-4 p-2 rounded-lg text-gray-500 opacity-0 group-hover:opacity-100 hover:bg-white/10 hover:text-gray-300 transition-all duration-200">
-        <MoreVertical className="w-4 h-4" />
+      {/* Download Button */}
+      <button 
+        onClick={(e) => {
+          e.stopPropagation();
+          onDownload(document.name);
+        }}
+        className="absolute top-4 right-4 p-2 rounded-lg text-gray-500 opacity-0 group-hover:opacity-100 hover:bg-blue-500/20 hover:text-blue-400 transition-all duration-200"
+      >
+        <Download className="w-4 h-4" />
       </button>
-    </div>
+    </button>
   );
 }
