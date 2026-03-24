@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Home from './components/Home';
+import ChromeSandbox from './components/ChromeSandbox';
+import Assistant from './components/Assistant';
+import Documents from './components/Documents';
 
 function App() {
   const [activeView, setActiveView] = useState('home');
@@ -11,26 +14,14 @@ function App() {
       
       <main className="flex-1 relative">
         {activeView === 'home' && <Home />}
-        {activeView === 'assistant' && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-gray-400 text-xl">Assistant View</p>
-          </div>
-        )}
-        {activeView === 'documents' && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-gray-400 text-xl">Documents View</p>
-          </div>
-        )}
+        {activeView === 'assistant' && <Assistant />}
+        {activeView === 'documents' && <Documents />}
         {activeView === 'applications' && (
           <div className="flex items-center justify-center h-full">
             <p className="text-gray-400 text-xl">Applications View</p>
           </div>
         )}
-        {activeView === 'chrome' && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-gray-400 text-xl">Chrome Sandbox View</p>
-          </div>
-        )}
+        {activeView === 'chrome' && <ChromeSandbox />}
       </main>
     </div>
   );
