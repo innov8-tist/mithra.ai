@@ -88,7 +88,13 @@ async def upload_files(files: list[UploadFile] = File(..., description="Upload m
 
 @app.post("/query")
 async def query_documents(request: QueryRequest):
-    result = await Retriver(request.query)
+    """
+    Intelligent query endpoint that routes to:
+    - Web search for current/general information
+    - RAG for personal document information
+    """
+    from agent.merge_web_rag_agent import merged_query
+    result = await merged_query(request.query)
     return result
 
 
