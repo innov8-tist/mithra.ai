@@ -98,6 +98,17 @@ async def query_documents(request: QueryRequest):
     return result
 
 
+@app.post("/navigate")
+async def navigate_service(request: QueryRequest):
+    """
+    Navigation endpoint that matches user query to government services
+    Returns the link to the matched service
+    """
+    from agent.navigation_agent import navigate_to_service
+    result = await navigate_to_service(request.query)
+    return result
+
+
 @app.get("/files")
 async def list_files():
     files = []
