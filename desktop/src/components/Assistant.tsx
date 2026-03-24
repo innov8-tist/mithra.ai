@@ -1,8 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Mic, Sparkles, Globe, Search } from 'lucide-react';
 import ActionCard from './ActionCard';
+import MessageContent from './MessageContent';
+import TypingIndicator from './TypingIndicator';
 
 type ChatMode = 'autofill' | 'advisor';
+
+const API_BASE_URL = 'http://localhost:8000';
 
 export default function Assistant() {
   const [message, setMessage] = useState('');
@@ -10,8 +14,15 @@ export default function Assistant() {
   const [chatMode, setChatMode] = useState<ChatMode>('advisor');
   const [showModeSelector, setShowModeSelector] = useState(false);
   const [popupPos, setPopupPos] = useState({ bottom: 0, left: 0 });
+  const [isLoading, setIsLoading] = useState(false);
   const popupRef = useRef<HTMLDivElement>(null);
   const modeButtonRef = useRef<HTMLButtonElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   // Recalculate position every time popup opens
   useEffect(() => {
@@ -40,10 +51,55 @@ export default function Assistant() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showModeSelector]);
 
-  const handleSend = () => {
-    if (message.trim()) {
-      setMessages([...messages, { role: 'user', content: message }]);
-      setMessage('');
+  const handleSend = async () => {
+    if (!message.trim()) return;
+    
+    const userMessage = message;
+    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setMessage('');
+
+    if (chatMode === 'advisor') {
+      setIsLoading(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/query`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ query: userMessage }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          
+          // Parse the response - it's a string in data.result
+          const responseText = data.result || data.response || data.answer || 'No response received';
+          
+          setMessages(prev => [...prev, { 
+            role: 'assistant', 
+            content: responseText
+          }]);
+        } else {
+          setMessages(prev => [...prev, { 
+            role: 'assistant', 
+            content: 'Sorry, I encountered an error. Please try again.'
+          }]);
+        }
+      } catch (error) {
+        console.error('Query failed:', error);
+        setMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: 'Failed to connect to the server. Please ensure the backend is running.'
+        }]);
+      } finally {
+        setIsLoading(false);
+      }
+    } else {
+      // AutoFill mode - placeholder
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: 'AutoFill mode will control the browser to fill forms automatically.'
+      }]);
     }
   };
 
@@ -171,16 +227,20 @@ export default function Assistant() {
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fadeInUp`}
               >
                 <div
-                  className={`max-w-[70%] px-5 py-3 rounded-2xl ${
+                  className={`max-w-[70%] px-5 py-3 rounded-2xl whitespace-pre-wrap ${
                     msg.role === 'user'
                       ? 'bg-blue-600 text-white'
                       : 'bg-white/5 backdrop-blur-sm border border-white/10 text-gray-200'
                   }`}
                 >
-                  {msg.content}
+                  <MessageContent content={msg.content} />
                 </div>
               </div>
             ))}
+            {/* Typing Indicator */}
+            {isLoading && <TypingIndicator />}
+            {/* Scroll anchor */}
+            <div ref={messagesEndRef} />
           </div>
         )}
       </div>
@@ -225,10 +285,14 @@ export default function Assistant() {
 
             <button
               onClick={handleSend}
-              disabled={!message.trim()}
+              disabled={!message.trim() || isLoading}
               className="p-2 rounded-lg bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed hover:shadow-[0_0_20px_rgba(59,130,246,0.4)] transition-all duration-200"
             >
-              <Send className="w-5 h-5" />
+              {isLoading ? (
+                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
             </button>
           </div>
         </div>
