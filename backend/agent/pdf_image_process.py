@@ -16,12 +16,13 @@ class DocumentProcessor:
         self.gemini_api = os.getenv("GEMINI_API_KEY")
         server_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
+        # user_details for images/PDFs, public for extracted text
+        self.user_details_dir = os.path.join(server_dir, "user_details")
         self.public_dir = os.path.join(server_dir, "public")
-        self.public2_dir = os.path.join(server_dir, "public2")
         
         # Create directories if they don't exist
+        os.makedirs(self.user_details_dir, exist_ok=True)
         os.makedirs(self.public_dir, exist_ok=True)
-        os.makedirs(self.public2_dir, exist_ok=True)
         
         genai.configure(api_key=self.gemini_api)
         self.model = genai.GenerativeModel('gemini-2.5-flash')
@@ -283,16 +284,21 @@ class DocumentProcessor:
     
     def process_all_documents(self) -> Dict[str, str]:
         """Process all documents and combine into one file."""
-        if not os.path.exists(self.public_dir):
-            raise FileNotFoundError(f"Directory not found: {self.public_dir}")
+        if not os.path.exists(self.user_details_dir):
+            raise FileNotFoundError(f"Directory not found: {self.user_details_dir}")
         
         all_extracted_data = []
         supported_images = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif')
         
-        files = sorted(os.listdir(self.public_dir))
+        files = sorted(os.listdir(self.user_details_dir))
         
         for file_name in files:
-            file_path = os.path.join(self.public_dir, file_name)
+            # Skip user_data.txt to avoid reprocessing
+            if file_name == "user_data.txt":
+                print(f"Skipping {file_name} (output file)")
+                continue
+                
+            file_path = os.path.join(self.user_details_dir, file_name)
             
             if not os.path.isfile(file_path):
                 continue
@@ -346,15 +352,15 @@ class DocumentProcessor:
         }
     
     async def process_first_document(self) -> Dict[str, str]:
-        """Process only the first document found and save to public2."""
-        if not os.path.exists(self.public_dir):
-            raise FileNotFoundError(f"Directory not found: {self.public_dir}")
+        """Process only the first document found and save to public."""
+        if not os.path.exists(self.user_details_dir):
+            raise FileNotFoundError(f"Directory not found: {self.user_details_dir}")
         
         supported_images = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif')
-        files = sorted(os.listdir(self.public_dir))
+        files = sorted(os.listdir(self.user_details_dir))
         
         for file_name in files:
-            file_path = os.path.join(self.public_dir, file_name)
+            file_path = os.path.join(self.user_details_dir, file_name)
             
             if not os.path.isfile(file_path):
                 continue

@@ -30,20 +30,21 @@ class QueryRequest(BaseModel):
 
 
 @app.post("/upload")
-async def upload_files(files: list[UploadFile] = File(...)):
+async def upload_files(files: list[UploadFile] = File(..., description="Upload multiple files")):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided")
+    
     saved_files = []
     processable_files = []
     supported_extensions = ('.pdf', '.png', '.jpg', '.jpeg', '.bmp', '.tiff', '.gif', '.txt', '.md')
     
     for file in files:
-        file_path = UPLOAD_DIR / file.filename
-        with open(file_path, "wb") as f:
+        # Save to user_details folder
+        user_details_path = UPLOAD_DIR / file.filename
+        with open(user_details_path, "wb") as f:
             content = await file.read()
             f.write(content)
         saved_files.append(file.filename)
-        
-        public_file_path = PUBLIC_DIR / file.filename
-        shutil.copy2(file_path, public_file_path)
         
         if file.filename.lower().endswith(supported_extensions):
             processable_files.append(file.filename)
@@ -51,11 +52,12 @@ async def upload_files(files: list[UploadFile] = File(...)):
     if processable_files:
         try:
             result = await process_documents()
+            
             return {
                 "message": "Upload completed and documents processed",
                 "files": saved_files,
                 "processed_files": processable_files,
-                "processing_result": result
+                "extracted_data_saved": "public/user_data.txt"
             }
         except Exception as e:
             return {
