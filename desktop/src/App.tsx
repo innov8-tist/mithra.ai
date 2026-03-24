@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Home from './components/Home';
+import ChromeSandbox from './components/ChromeSandbox';
 
 function App() {
   const [activeView, setActiveView] = useState('home');
@@ -26,11 +27,7 @@ function App() {
             <p className="text-gray-400 text-xl">Applications View</p>
           </div>
         )}
-        {activeView === 'chrome' && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-gray-400 text-xl">Chrome Sandbox View</p>
-          </div>
-        )}
+        {activeView === 'chrome' && <ChromeSandbox />}
       </main>
     </div>
   );
