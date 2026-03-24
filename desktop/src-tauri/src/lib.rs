@@ -117,9 +117,13 @@ async fn get_current_tab_url() -> Result<String, String> {
     let tabs: Vec<Value> = res.json().await
         .map_err(|e| format!("Failed to parse CDP response: {}", e))?;
 
-    // Find the first page tab (not extension or devtools)
+    // Find the first page tab (not extension, devtools, or chrome internal)
     let url = tabs.iter()
-        .find(|tab| tab.get("type").and_then(|t| t.as_str()) == Some("page"))
+        .find(|tab| {
+            let is_page = tab.get("type").and_then(|t| t.as_str()) == Some("page");
+            let url = tab.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            is_page && !url.starts_with("devtools://") && !url.starts_with("chrome://")
+        })
         .and_then(|tab| tab.get("url"))
         .and_then(|url| url.as_str())
         .map(|s| s.to_string())
@@ -143,7 +147,12 @@ async fn get_page_ws_url() -> Result<String, String> {
         .map_err(|e| format!("Failed to parse CDP: {}", e))?;
 
     tabs.iter()
-        .find(|tab| tab.get("type").and_then(|t| t.as_str()) == Some("page"))
+        .find(|tab| {
+            let is_page = tab.get("type").and_then(|t| t.as_str()) == Some("page");
+            let url = tab.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            // Exclude devtools and chrome internal pages
+            is_page && !url.starts_with("devtools://") && !url.starts_with("chrome://")
+        })
         .and_then(|tab| tab.get("webSocketDebuggerUrl"))
         .and_then(|url| url.as_str())
         .map(|s| s.to_string())
@@ -251,6 +260,140 @@ async fn extract_form_fields() -> Result<Value, String> {
 }
 
 #[tauri::command]
+async fn inject_magic_fill_button() -> Result<String, String> {
+    let ws_url = get_page_ws_url().await?;
+    
+    let js_code = r#"
+    (() => {
+        // Remove existing button if any
+        const existing = document.getElementById('mithra-magic-fill-btn');
+        if (existing) existing.remove();
+        
+        // Check if there are any form fields
+        const fields = document.querySelectorAll("input, select, textarea");
+        const visibleFields = Array.from(fields).filter(el => {
+            const type = (el.getAttribute("type") || "text").toLowerCase();
+            if (type === "hidden" || el.disabled) return false;
+            const name = (el.name || "").toLowerCase();
+            if (name.includes("csrf") || name.includes("token")) return false;
+            return true;
+        });
+        
+        if (visibleFields.length === 0) {
+            return { injected: false, fieldCount: 0 };
+        }
+        
+        // Initialize click flag
+        if (!window.__mithraMagicFillClicked) {
+            window.__mithraMagicFillClicked = false;
+        }
+        
+        // Create floating button container
+        const btn = document.createElement('div');
+        btn.id = 'mithra-magic-fill-btn';
+        btn.style.cssText = `
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 999999;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 50px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            cursor: pointer;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+            user-select: none;
+        `;
+        
+        btn.innerHTML = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
+            </svg>
+            <span>Magic Fill (${visibleFields.length})</span>
+        `;
+        
+        // Add event listeners without inline handlers
+        btn.addEventListener('mouseenter', function() {
+            this.style.transform = 'scale(1.05)';
+            this.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.6)';
+        });
+        
+        btn.addEventListener('mouseleave', function() {
+            this.style.transform = 'scale(1)';
+            this.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
+        });
+        
+        btn.addEventListener('click', function() {
+            window.__mithraMagicFillClicked = true;
+            console.log('Magic Fill button clicked!');
+            // Visual feedback
+            this.style.transform = 'scale(0.95)';
+            setTimeout(() => {
+                this.style.transform = 'scale(1)';
+            }, 100);
+        });
+        
+        document.body.appendChild(btn);
+        return { injected: true, fieldCount: visibleFields.length };
+    })()
+    "#;
+
+    let result = send_cdp_command(&ws_url, "Runtime.evaluate", json!({
+        "expression": js_code,
+        "returnByValue": true
+    })).await?;
+
+    let value = result
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .cloned()
+        .ok_or_else(|| "Failed to inject button".to_string())?;
+
+    Ok(serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string()))
+}
+
+#[tauri::command]
+async fn check_magic_fill_clicked() -> Result<bool, String> {
+    let ws_url = get_page_ws_url().await?;
+    
+    let js_code = r#"
+    (() => {
+        const clicked = window.__mithraMagicFillClicked || false;
+        if (clicked) {
+            console.log('Mithra: Click detected, resetting flag');
+            window.__mithraMagicFillClicked = false;
+            return true;
+        }
+        return false;
+    })()
+    "#;
+
+    let result = send_cdp_command(&ws_url, "Runtime.evaluate", json!({
+        "expression": js_code,
+        "returnByValue": true
+    })).await?;
+
+    let clicked = result
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if clicked {
+        println!("Magic Fill button clicked detected!");
+    }
+
+    Ok(clicked)
+}
+
+#[tauri::command]
 async fn fill_form_fields(fill_data: Vec<Value>) -> Result<String, String> {
     let ws_url = get_page_ws_url().await?;
     
@@ -349,7 +492,9 @@ pub fn run() {
             get_current_tab_url, 
             capture_screenshot, 
             extract_form_fields, 
-            fill_form_fields
+            fill_form_fields,
+            inject_magic_fill_button,
+            check_magic_fill_clicked
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
