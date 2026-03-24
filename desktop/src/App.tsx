@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Home from './components/Home';
+import Assistant from './components/Assistant';
 
 function App() {
   const [activeView, setActiveView] = useState('home');
@@ -11,11 +12,7 @@ function App() {
       
       <main className="flex-1 relative">
         {activeView === 'home' && <Home />}
-        {activeView === 'assistant' && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-gray-400 text-xl">Assistant View</p>
-          </div>
-        )}
+        {activeView === 'assistant' && <Assistant />}
         {activeView === 'documents' && (
           <div className="flex items-center justify-center h-full">
             <p className="text-gray-400 text-xl">Documents View</p>
