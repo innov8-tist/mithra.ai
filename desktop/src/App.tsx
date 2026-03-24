@@ -4,6 +4,7 @@ import Home from './components/Home';
 import ChromeSandbox from './components/ChromeSandbox';
 import Assistant from './components/Assistant';
 import Documents from './components/Documents';
+import Applications from './components/Applications';
 
 function App() {
   const [activeView, setActiveView] = useState('home');
@@ -13,14 +14,10 @@ function App() {
       <Sidebar activeItem={activeView} onNavigate={setActiveView} />
       
       <main className="flex-1 relative">
-        {activeView === 'home' && <Home />}
+        {activeView === 'home' && <Home onNavigate={setActiveView} />}
         {activeView === 'assistant' && <Assistant />}
         {activeView === 'documents' && <Documents />}
-        {activeView === 'applications' && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-gray-400 text-xl">Applications View</p>
-          </div>
-        )}
+        {activeView === 'applications' && <Applications />}
         {activeView === 'chrome' && <ChromeSandbox />}
       </main>
     </div>
