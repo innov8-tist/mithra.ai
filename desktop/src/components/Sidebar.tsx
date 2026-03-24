@@ -1,4 +1,4 @@
-import { Home, MessageSquare, FileText, Grid } from 'lucide-react';
+import { Home, MessageSquare, FileText, Grid, Globe } from 'lucide-react';
 
 interface SidebarProps {
   activeItem: string;
@@ -11,6 +11,7 @@ export default function Sidebar({ activeItem, onNavigate }: SidebarProps) {
     { id: 'assistant', label: 'Assistant', icon: MessageSquare },
     { id: 'documents', label: 'Documents', icon: FileText },
     { id: 'applications', label: 'Applications', icon: Grid },
+    { id: 'chrome', label: 'Chrome Sandbox', icon: Globe },
   ];
 
   return (
@@ -22,7 +23,7 @@ export default function Sidebar({ activeItem, onNavigate }: SidebarProps) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
         </div>
-        <span className="text-lg font-semibold text-white">Sahayak</span>
+        <span className="text-lg font-semibold text-white">Mitra.ai</span>
       </div>
 
       {/* Navigation */}

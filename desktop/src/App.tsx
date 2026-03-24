@@ -26,6 +26,11 @@ function App() {
             <p className="text-gray-400 text-xl">Applications View</p>
           </div>
         )}
+        {activeView === 'chrome' && (
+          <div className="flex items-center justify-center h-full">
+            <p className="text-gray-400 text-xl">Chrome Sandbox View</p>
+          </div>
+        )}
       </main>
     </div>
   );
