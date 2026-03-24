@@ -8,6 +8,7 @@ function ChromeSandbox() {
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [isMagicFilling, setIsMagicFilling] = useState(false);
   const [magicFillStatus, setMagicFillStatus] = useState<string | null>(null);
+  const [formFieldCount, setFormFieldCount] = useState(0);
 
   async function launchChrome() {
     setIsLaunchingChrome(true);
@@ -17,6 +18,7 @@ function ChromeSandbox() {
       const result = await invoke('launch_chrome_with_cdp');
       setChromeMsg(result as string);
       setIsMonitoring(true);
+      console.log('Chrome launched, monitoring started');
     } catch (error) {
       setChromeMsg(`Error: ${error}`);
     } finally {
@@ -32,6 +34,22 @@ function ChromeSandbox() {
       console.log('Current Tab URL:', url);
     } catch (error) {
       setCurrentTabUrl(`Error: ${error}`);
+    }
+  }
+
+  async function injectMagicFillButton() {
+    try {
+      const result = await invoke<string>('inject_magic_fill_button');
+      const data = JSON.parse(result);
+      if (data.injected) {
+        console.log(`Magic Fill button injected - ${data.fieldCount} fields detected`);
+        setFormFieldCount(data.fieldCount);
+      } else {
+        console.log('No forms detected, button not injected');
+        setFormFieldCount(0);
+      }
+    } catch (error) {
+      console.log('Button injection error:', error);
     }
   }
 
@@ -88,21 +106,42 @@ function ChromeSandbox() {
   }
 
   useEffect(() => {
-    let interval: number | undefined;
+    let urlInterval: number | undefined;
+    let clickInterval: number | undefined;
 
     if (isMonitoring) {
+      console.log('Starting monitoring intervals...');
       getCurrentTab();
-      interval = window.setInterval(() => {
+      injectMagicFillButton();
+      
+      urlInterval = window.setInterval(() => {
         getCurrentTab();
+        injectMagicFillButton();
       }, 2000);
+
+      // Start checking for button clicks
+      clickInterval = window.setInterval(async () => {
+        try {
+          const clicked = await invoke<boolean>('check_magic_fill_clicked');
+          if (clicked && !isMagicFilling) {
+            console.log('Magic Fill button clicked in webpage! Triggering fill...');
+            handleMagicFill();
+          }
+        } catch (error) {
+          // Silently ignore errors when button not injected yet
+        }
+      }, 500);
     }
 
     return () => {
-      if (interval) {
-        clearInterval(interval);
+      if (urlInterval) {
+        clearInterval(urlInterval);
+      }
+      if (clickInterval) {
+        clearInterval(clickInterval);
       }
     };
-  }, [isMonitoring]);
+  }, [isMonitoring, isMagicFilling]);
 
   return (
     <div className="h-full flex flex-col items-center pt-12 px-8">
@@ -125,20 +164,22 @@ function ChromeSandbox() {
           </p>
         </div>
 
-        <div 
-          onClick={!isMagicFilling && isMonitoring ? handleMagicFill : undefined}
-          className={`w-64 p-6 bg-gradient-to-br from-purple-600 to-purple-700 rounded-xl hover:shadow-2xl transition-all cursor-pointer ${
-            isMagicFilling || !isMonitoring ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
-          }`}
-        >
-          <div className="w-14 h-14 bg-white/20 rounded-xl flex items-center justify-center text-white mb-4">
-            <MagicIcon />
+        {isMonitoring && (
+          <div 
+            onClick={!isMagicFilling ? handleMagicFill : undefined}
+            className={`w-64 p-6 bg-gradient-to-br from-purple-600 to-purple-700 rounded-xl hover:shadow-2xl transition-all cursor-pointer ${
+              isMagicFilling ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
+            }`}
+          >
+            <div className="w-14 h-14 bg-white/20 rounded-xl flex items-center justify-center text-white mb-4">
+              <MagicIcon />
+            </div>
+            <h3 className="font-semibold text-white mb-2">Magic Fill</h3>
+            <p className="text-sm text-purple-100">
+              {isMagicFilling ? 'Processing...' : formFieldCount > 0 ? `${formFieldCount} fields detected` : 'AI-powered form filling'}
+            </p>
           </div>
-          <h3 className="font-semibold text-white mb-2">Magic Fill</h3>
-          <p className="text-sm text-purple-100">
-            {isMagicFilling ? 'Processing...' : !isMonitoring ? 'Launch browser first' : 'AI-powered form filling'}
-          </p>
-        </div>
+        )}
       </div>
 
       {chromeMsg && (
@@ -153,7 +194,10 @@ function ChromeSandbox() {
           <p className="font-semibold text-white mb-2">Current Active Tab:</p>
           <p className="text-gray-300 break-all">{currentTabUrl}</p>
           {isMonitoring && (
-            <p className="mt-3 text-sm text-gray-400 italic">Auto-refreshing every 2 seconds...</p>
+            <p className="mt-3 text-sm text-gray-400 italic">
+              Auto-refreshing every 2 seconds...
+              {formFieldCount > 0 && ` | Magic Fill button injected (${formFieldCount} fields)`}
+            </p>
           )}
         </div>
       )}
