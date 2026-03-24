@@ -18,7 +18,7 @@ dependencies = [
     "langchain-core>=1.2.6",
     "langchain-experimental>=0.4.1",
     "langchain-google-genai>=4.1.2",
-    "langchain-groq>=1.1.1",
+    "groq>=0.14.0",
     "langchain-text-splitters>=1.1.0",
     "neo4j>=6.0.3",
     "pdf2image>=1.17.0",
@@ -29,4 +29,5 @@ dependencies = [
     "python-multipart>=0.0.12",
     "rank-bm25>=0.2.2",
     "uvicorn[standard]>=0.32.0",
+    "langchain-groq>=1.1.2",
 ]
