@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -37,6 +37,21 @@ PUBLIC_DIR.mkdir(exist_ok=True)
 
 
 class QueryRequest(BaseModel):
+    query: str
+
+
+class AutofillRequest(BaseModel):
+    query: str
+    autofill: bool = True
+
+
+class BrowserRequest(BaseModel):
+    url: str
+    headless: bool = False
+
+
+class LiveQueryRequest(BaseModel):
+    screenshot_b64: str
     query: str
 
 
@@ -93,9 +108,148 @@ async def query_documents(request: QueryRequest):
     - Web search for current/general information
     - RAG for personal document information
     """
-    from agent.merge_web_rag_agent import merged_query
-    result = await merged_query(request.query)
+    try:
+        from agent.merge_web_rag_agent import merged_query
+        import asyncio
+        
+        # Add timeout of 60 seconds
+        result = await asyncio.wait_for(
+            merged_query(request.query),
+            timeout=60.0
+        )
+        return result
+    except asyncio.TimeoutError:
+        return {
+            "query": request.query,
+            "source": "error",
+            "data": "Request timed out. The query is taking too long to process. Please try a simpler question.",
+            "status": "timeout"
+        }
+    except Exception as e:
+        return {
+            "query": request.query,
+            "source": "error",
+            "data": f"Error processing query: {str(e)}",
+            "status": "error"
+        }
+
+
+@app.post("/navigate")
+async def navigate_service(request: QueryRequest):
+    """
+    Navigation endpoint that matches user query to government services
+    Returns the link to the matched service
+    """
+    from agent.navigation_agent import navigate_to_service
+    result = await navigate_to_service(request.query)
     return result
+
+
+@app.post("/autofill")
+async def autofill_service(request: AutofillRequest):
+    """
+    Autofill endpoint that:
+    1. Matches user query to a service (navigation)
+    2. Launches browser and navigates to the service link
+    3. Returns page info for autofill
+    """
+    from agent.navigation_agent import navigate_to_service
+    from agent.browser_automation import launch_and_navigate
+    
+    # Get the service link based on query
+    navigation_result = await navigate_to_service(request.query)
+    
+    if navigation_result.get("success"):
+        service_link = navigation_result["link"]
+        
+        # Launch browser and navigate (synchronous)
+        browser_result = launch_and_navigate(service_link, headless=False)
+        
+        return {
+            "success": browser_result["success"],
+            "link": service_link,
+            "cdp_port": browser_result.get("cdp_port"),
+            "message": browser_result.get("message"),
+            "query": request.query
+        }
+    else:
+        return {
+            "success": False,
+            "error": navigation_result.get("error", "Service not found"),
+            "query": request.query
+        }
+
+
+@app.post("/open-browser")
+async def open_browser(request: BrowserRequest):
+    """
+    Open browser with CDP and navigate to URL
+    """
+    from agent.browser_automation import launch_and_navigate
+    
+    result = launch_and_navigate(request.url, request.headless)
+    return result
+
+
+@app.post("/close-browser")
+async def close_browser():
+    """
+    Close the browser instance
+    """
+    from agent.browser_automation import close_browser_instance
+    
+    result = close_browser_instance()
+    return result
+
+
+@app.post("/live-query")
+async def live_query(
+    query: str = Form(None),
+    screenshot: UploadFile = File(None)
+):
+    """
+    Live agent endpoint that analyzes screenshot + query
+    Returns text response and decision (fill or normal)
+    """
+    try:
+        # Validate inputs
+        if not query:
+            return {
+                "success": False,
+                "error": "Query parameter is required. Make sure the 'query' field is checked in Postman form-data.",
+                "text": "Missing query",
+                "decision": "normal"
+            }
+        
+        if not screenshot:
+            return {
+                "success": False,
+                "error": "Screenshot file is required. Make sure the 'screenshot' field is checked in Postman form-data.",
+                "text": "Missing screenshot",
+                "decision": "normal"
+            }
+        
+        from agent.live_agent import analyze_live_query
+        import base64
+        
+        # Read image file and convert to base64
+        image_data = await screenshot.read()
+        
+        if not image_data:
+            raise HTTPException(status_code=400, detail="Screenshot file is empty")
+        
+        screenshot_b64 = base64.b64encode(image_data).decode('utf-8')
+        
+        result = await analyze_live_query(screenshot_b64, query)
+        return result
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "text": "Failed to process request",
+            "decision": "normal"
+        }
 
 
 @app.get("/files")

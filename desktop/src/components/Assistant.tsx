@@ -72,8 +72,8 @@ export default function Assistant() {
         if (response.ok) {
           const data = await response.json();
           
-          // Parse the response - it's a string in data.result
-          const responseText = data.result || data.response || data.answer || 'No response received';
+          // Parse the response - check multiple possible fields
+          const responseText = data.data || data.result || data.response || data.answer || 'No response received';
           
           setMessages(prev => [...prev, { 
             role: 'assistant', 
@@ -95,11 +95,46 @@ export default function Assistant() {
         setIsLoading(false);
       }
     } else {
-      // AutoFill mode - placeholder
-      setMessages(prev => [...prev, { 
-        role: 'assistant', 
-        content: 'AutoFill mode will control the browser to fill forms automatically.'
-      }]);
+      // AutoFill mode - call autofill API
+      setIsLoading(true);
+      try {
+        const response = await fetch(`${API_BASE_URL}/autofill`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ query: userMessage, autofill: true }),
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          
+          if (data.success) {
+            setMessages(prev => [...prev, { 
+              role: 'assistant', 
+              content: `✓ Browser launched successfully!\n\n🌐 Navigated to: ${data.link}\n\n🔌 CDP Port: ${data.cdp_port}\n\nThe browser is now open and ready for autofill. You can now use the extension to fill the form.`
+            }]);
+          } else {
+            setMessages(prev => [...prev, { 
+              role: 'assistant', 
+              content: `Failed to launch browser: ${data.error || 'Unknown error'}`
+            }]);
+          }
+        } else {
+          setMessages(prev => [...prev, { 
+            role: 'assistant', 
+            content: 'Sorry, I encountered an error launching the browser. Please try again.'
+          }]);
+        }
+      } catch (error) {
+        console.error('Autofill failed:', error);
+        setMessages(prev => [...prev, { 
+          role: 'assistant', 
+          content: 'Failed to connect to the server. Please ensure the backend is running.'
+        }]);
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
