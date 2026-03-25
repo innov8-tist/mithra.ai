@@ -482,19 +482,252 @@ async fn fill_form_fields(fill_data: Vec<Value>) -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+async fn inject_voice_button() -> Result<String, String> {
+    let ws_url = get_page_ws_url().await?;
+    
+    let js_code = r#"
+    (() => {
+        // Check if button already exists and is functional
+        const existing = document.getElementById('mithra-voice-btn');
+        if (existing && window.__mithraVoiceState) {
+            return { injected: true, already_exists: true };
+        }
+        
+        // Remove any broken button
+        if (existing) existing.remove();
+        
+        // Initialize recording state
+        window.__mithraVoiceState = {
+            recording: false,
+            mediaRecorder: null,
+            audioChunks: [],
+            audioBase64: null
+        };
+        
+        // Create floating voice button
+        const btn = document.createElement('div');
+        btn.id = 'mithra-voice-btn';
+        btn.style.cssText = `
+            position: fixed;
+            bottom: 90px;
+            right: 20px;
+            z-index: 999999;
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            box-shadow: 0 4px 15px rgba(245, 87, 108, 0.4);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            user-select: none;
+        `;
+        
+        btn.innerHTML = `
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+        `;
+        
+        btn.addEventListener('mouseenter', function() {
+            this.style.transform = 'scale(1.1)';
+            this.style.boxShadow = '0 6px 20px rgba(245, 87, 108, 0.6)';
+        });
+        
+        btn.addEventListener('mouseleave', function() {
+            if (!window.__mithraVoiceState.recording) {
+                this.style.transform = 'scale(1)';
+                this.style.boxShadow = '0 4px 15px rgba(245, 87, 108, 0.4)';
+            }
+        });
+        
+        btn.addEventListener('click', async function() {
+            const state = window.__mithraVoiceState;
+            
+            if (!state.recording) {
+                // Start recording
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    state.mediaRecorder = new MediaRecorder(stream);
+                    state.audioChunks = [];
+                    
+                    state.mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            state.audioChunks.push(event.data);
+                        }
+                    };
+                    
+                    state.mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(state.audioChunks, { type: 'audio/webm' });
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                            state.audioBase64 = reader.result.split(',')[1];
+                            console.log('Audio recorded, base64 length:', state.audioBase64.length);
+                        };
+                        reader.readAsDataURL(audioBlob);
+                        
+                        // Stop all tracks
+                        stream.getTracks().forEach(track => track.stop());
+                    };
+                    
+                    state.mediaRecorder.start();
+                    state.recording = true;
+                    
+                    // Update UI
+                    this.style.background = 'linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%)';
+                    this.style.animation = 'pulse 1.5s infinite';
+                    this.innerHTML = `
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="6" y="6" width="12" height="12" rx="2"/>
+                        </svg>
+                    `;
+                    console.log('Voice recording started');
+                } catch (error) {
+                    console.error('Microphone access denied:', error);
+                    alert('Microphone access denied. Please allow microphone access.');
+                }
+            } else {
+                // Stop recording
+                if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') {
+                    state.mediaRecorder.stop();
+                    state.recording = false;
+                    
+                    // Update UI
+                    this.style.background = 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)';
+                    this.style.animation = 'none';
+                    this.innerHTML = `
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                            <line x1="12" y1="19" x2="12" y2="23"/>
+                            <line x1="8" y1="23" x2="16" y2="23"/>
+                        </svg>
+                    `;
+                    console.log('Voice recording stopped');
+                }
+            }
+        });
+        
+        // Add pulse animation
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes pulse {
+                0%, 100% { transform: scale(1); }
+                50% { transform: scale(1.05); }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        document.body.appendChild(btn);
+        return { injected: true, already_exists: false };
+    })()
+    "#;
+
+    let result = send_cdp_command(&ws_url, "Runtime.evaluate", json!({
+        "expression": js_code,
+        "returnByValue": true
+    })).await?;
+
+    let value = result
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .cloned()
+        .ok_or_else(|| "Failed to inject voice button".to_string())?;
+
+    Ok(serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string()))
+}
+
+#[tauri::command]
+async fn check_voice_recording_state() -> Result<bool, String> {
+    let ws_url = get_page_ws_url().await?;
+    
+    let js_code = r#"
+    (() => {
+        return window.__mithraVoiceState ? window.__mithraVoiceState.recording : false;
+    })()
+    "#;
+
+    let result = send_cdp_command(&ws_url, "Runtime.evaluate", json!({
+        "expression": js_code,
+        "returnByValue": true
+    })).await?;
+
+    let recording = result
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    Ok(recording)
+}
+
+#[tauri::command]
+async fn get_recorded_audio() -> Result<String, String> {
+    let ws_url = get_page_ws_url().await?;
+    
+    let js_code = r#"
+    (() => {
+        if (window.__mithraVoiceState && window.__mithraVoiceState.audioBase64) {
+            const audio = window.__mithraVoiceState.audioBase64;
+            // Clear the audio after retrieving
+            window.__mithraVoiceState.audioBase64 = null;
+            window.__mithraVoiceState.audioChunks = [];
+            return audio;
+        }
+        return null;
+    })()
+    "#;
+
+    let result = send_cdp_command(&ws_url, "Runtime.evaluate", json!({
+        "expression": js_code,
+        "returnByValue": true
+    })).await?;
+
+    let audio = result
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "No audio recorded".to_string())?;
+
+    Ok(audio)
+}
+
+#[tauri::command]
+async fn navigate_to_url(url: String) -> Result<String, String> {
+    let ws_url = get_page_ws_url().await?;
+    
+    send_cdp_command(&ws_url, "Page.navigate", json!({
+        "url": url
+    })).await?;
+    
+    Ok(format!("Navigated to {}", url))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet, 
-            launch_chrome_with_cdp, 
+            launch_chrome_with_cdp,
+            navigate_to_url,
             get_current_tab_url, 
             capture_screenshot, 
             extract_form_fields, 
             fill_form_fields,
             inject_magic_fill_button,
-            check_magic_fill_clicked
+            inject_voice_button,
+            check_magic_fill_clicked,
+            check_voice_recording_state,
+            get_recorded_audio
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

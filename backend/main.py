@@ -53,6 +53,12 @@ class BrowserRequest(BaseModel):
 class LiveQueryRequest(BaseModel):
     screenshot_b64: str
     query: str
+    fields: list[dict] = []  # Optional: extracted form fields for better matching
+
+
+class VoiceTranscribeRequest(BaseModel):
+    audio_base64: str
+    language_code: str = "auto"  # Auto-detect language
 
 
 class VisionMagicFillRequest(BaseModel):
@@ -150,11 +156,9 @@ async def autofill_service(request: AutofillRequest):
     """
     Autofill endpoint that:
     1. Matches user query to a service (navigation)
-    2. Launches browser and navigates to the service link
-    3. Returns page info for autofill
+    2. Returns the service link (frontend will open CDP browser)
     """
     from agent.navigation_agent import navigate_to_service
-    from agent.browser_automation import launch_and_navigate
     
     # Get the service link based on query
     navigation_result = await navigate_to_service(request.query)
@@ -162,14 +166,10 @@ async def autofill_service(request: AutofillRequest):
     if navigation_result.get("success"):
         service_link = navigation_result["link"]
         
-        # Launch browser and navigate (synchronous)
-        browser_result = launch_and_navigate(service_link, headless=False)
-        
         return {
-            "success": browser_result["success"],
+            "success": True,
             "link": service_link,
-            "cdp_port": browser_result.get("cdp_port"),
-            "message": browser_result.get("message"),
+            "message": "Service found. Frontend will open CDP browser.",
             "query": request.query
         }
     else:
@@ -202,48 +202,203 @@ async def close_browser():
     return result
 
 
+@app.post("/voice-transcribe")
+async def voice_transcribe(request: VoiceTranscribeRequest):
+    """
+    Transcribe audio using Sarvam AI
+    Supports: Malayalam (ml-IN), English (en-IN), Hindi (hi-IN), and more
+    """
+    import httpx
+    import base64
+    import io
+    
+    SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
+    if not SARVAM_API_KEY:
+        return {"success": False, "error": "SARVAM_API_KEY not set in .env"}
+    
+    try:
+        # Decode base64 audio
+        audio_bytes = base64.b64decode(request.audio_base64)
+        
+        # Try multiple languages if auto-detect
+        languages_to_try = []
+        if request.language_code == "auto":
+            languages_to_try = ["ml-IN", "en-IN", "hi-IN"]  # Malayalam, English, Hindi
+        else:
+            languages_to_try = [request.language_code]
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for lang_code in languages_to_try:
+                try:
+                    print(f"Trying transcription with language: {lang_code}")
+                    
+                    # Sarvam expects multipart/form-data with file upload
+                    files = {
+                        'file': ('audio.webm', audio_bytes, 'audio/webm')
+                    }
+                    data = {
+                        'language_code': lang_code
+                    }
+                    
+                    transcribe_response = await client.post(
+                        "https://api.sarvam.ai/speech-to-text",
+                        headers={
+                            "api-subscription-key": SARVAM_API_KEY
+                        },
+                        files=files,
+                        data=data
+                    )
+                    
+                    if transcribe_response.status_code == 200:
+                        transcribe_data = transcribe_response.json()
+                        transcribed_text = transcribe_data.get("transcript", "")
+                        
+                        if transcribed_text and transcribed_text.strip():
+                            print(f"✅ Transcribed ({lang_code}): {transcribed_text}")
+                            
+                            # Translate to English if not already English
+                            translated_text = transcribed_text
+                            if lang_code != "en-IN":
+                                try:
+                                    print(f"Translating from {lang_code} to en-IN...")
+                                    translate_response = await client.post(
+                                        "https://api.sarvam.ai/translate",
+                                        headers={
+                                            "api-subscription-key": SARVAM_API_KEY,
+                                            "Content-Type": "application/json"
+                                        },
+                                        json={
+                                            "input": transcribed_text,
+                                            "source_language_code": lang_code,
+                                            "target_language_code": "en-IN",
+                                            "speaker_gender": "Male",
+                                            "mode": "formal",
+                                            "model": "mayura:v1",
+                                            "enable_preprocessing": True
+                                        }
+                                    )
+                                    
+                                    if translate_response.status_code == 200:
+                                        translate_data = translate_response.json()
+                                        translated_text = translate_data.get("translated_text", transcribed_text)
+                                        print(f"✅ Translated to English: {translated_text}")
+                                    else:
+                                        print(f"Translation failed: {translate_response.text}")
+                                except Exception as e:
+                                    print(f"Translation error: {e}")
+                            
+                            return {
+                                "success": True,
+                                "transcribed_text": transcribed_text,
+                                "translated_text": translated_text,
+                                "language": lang_code
+                            }
+                    else:
+                        print(f"Failed with {lang_code}: {transcribe_response.text}")
+                        
+                except Exception as e:
+                    print(f"Error with {lang_code}: {e}")
+                    continue
+            
+            # If all languages failed
+            return {
+                "success": False,
+                "error": "Could not transcribe audio in any supported language"
+            }
+                
+    except Exception as e:
+        import traceback
+        print(f"Voice transcribe error: {e}")
+        print(traceback.format_exc())
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 @app.post("/live-query")
-async def live_query(
-    query: str = Form(None),
-    screenshot: UploadFile = File(None)
-):
+async def live_query(request: LiveQueryRequest):
     """
     Live agent endpoint that analyzes screenshot + query
     Returns text response and decision (fill or normal)
+    Accepts JSON with screenshot_b64 and query
     """
     try:
+        print(f"\n{'='*60}")
+        print(f"LIVE QUERY REQUEST")
+        print(f"{'='*60}")
+        print(f"Query: {request.query}")
+        print(f"Screenshot length: {len(request.screenshot_b64) if request.screenshot_b64 else 0} chars")
+        
         # Validate inputs
-        if not query:
+        if not request.query:
             return {
                 "success": False,
-                "error": "Query parameter is required. Make sure the 'query' field is checked in Postman form-data.",
+                "error": "Query parameter is required",
                 "text": "Missing query",
                 "decision": "normal"
             }
         
-        if not screenshot:
+        if not request.screenshot_b64:
             return {
                 "success": False,
-                "error": "Screenshot file is required. Make sure the 'screenshot' field is checked in Postman form-data.",
+                "error": "Screenshot is required",
                 "text": "Missing screenshot",
                 "decision": "normal"
             }
         
         from agent.live_agent import analyze_live_query
-        import base64
+        from agent.vision_magic_fill import analyze_with_gemini_vision
         
-        # Read image file and convert to base64
-        image_data = await screenshot.read()
+        # If fields provided, enhance them with labels from Gemini Vision
+        enhanced_fields = request.fields
+        if request.fields and request.screenshot_b64:
+            print(f"Enhancing {len(request.fields)} fields with Gemini Vision labels...")
+            try:
+                vision_labels = await analyze_with_gemini_vision(request.screenshot_b64, request.fields)
+                label_map = {item["index"]: item.get("label") for item in vision_labels}
+                
+                # Merge labels into fields
+                for field in enhanced_fields:
+                    field_index = field.get("index")
+                    if field_index is not None and field_index in label_map:
+                        field["label"] = label_map[field_index]
+                        
+                print(f"Enhanced fields with labels:")
+                for field in enhanced_fields[:5]:
+                    print(f"  - {field.get('label', 'N/A')} (id: {field.get('id')})")
+            except Exception as e:
+                print(f"Warning: Could not enhance fields with labels: {e}")
         
-        if not image_data:
-            raise HTTPException(status_code=400, detail="Screenshot file is empty")
+        result = await analyze_live_query(request.screenshot_b64, request.query, enhanced_fields)
         
-        screenshot_b64 = base64.b64encode(image_data).decode('utf-8')
+        print(f"\n{'='*60}")
+        print(f"LIVE QUERY RESPONSE")
+        print(f"{'='*60}")
+        print(f"Success: {result.get('success')}")
+        print(f"Decision: {result.get('decision')}")
+        print(f"Text: {result.get('text')}")
+        if result.get('fields'):
+            print(f"Fields ({len(result['fields'])}):")
+            for field in result['fields']:
+                print(f"  - {field.get('label')}: {field.get('value')}")
+                if 'id' in field:
+                    print(f"    → ID: {field['id']}, Tag: {field.get('tag')}")
+        if result.get('error'):
+            print(f"Error: {result.get('error')}")
+        print(f"{'='*60}\n")
         
-        result = await analyze_live_query(screenshot_b64, query)
         return result
         
     except Exception as e:
+        import traceback
+        print(f"\n{'='*60}")
+        print(f"LIVE QUERY ERROR")
+        print(f"{'='*60}")
+        print(f"Error: {str(e)}")
+        print(traceback.format_exc())
+        print(f"{'='*60}\n")
+        
         return {
             "success": False,
             "error": str(e),

@@ -21,8 +21,13 @@ export default function Home({ onNavigate }: HomeProps) {
           {/* Hero Icon */}
           <div className="mb-6 animate-pulse-glow">
             <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-[0_0_40px_rgba(99,102,241,0.4)]">
-              <svg className="w-10 h-10 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              <svg className="w-12 h-12" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                {/* Circle on top */}
+                <circle cx="50" cy="20" r="8" fill="white" />
+                {/* M shape with person silhouette */}
+                <path d="M20 40 Q20 35 25 35 L35 35 Q40 35 40 40 L40 80 Q40 85 35 85 L25 85 Q20 85 20 80 Z" fill="white" opacity="0.9" />
+                <path d="M60 40 Q60 35 65 35 L75 35 Q80 35 80 40 L80 80 Q80 85 75 85 L65 85 Q60 85 60 80 Z" fill="white" opacity="0.9" />
+                <path d="M35 50 Q50 65 65 50" stroke="white" strokeWidth="8" fill="none" strokeLinecap="round" />
               </svg>
             </div>
           </div>
