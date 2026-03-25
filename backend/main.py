@@ -316,47 +316,65 @@ async def voice_transcribe(request: VoiceTranscribeRequest):
 
 
 @app.post("/live-query")
-async def live_query(
-    query: str = Form(None),
-    screenshot: UploadFile = File(None)
-):
+async def live_query(request: LiveQueryRequest):
     """
     Live agent endpoint that analyzes screenshot + query
     Returns text response and decision (fill or normal)
+    Accepts JSON with screenshot_b64 and query
     """
     try:
+        print(f"\n{'='*60}")
+        print(f"LIVE QUERY REQUEST")
+        print(f"{'='*60}")
+        print(f"Query: {request.query}")
+        print(f"Screenshot length: {len(request.screenshot_b64) if request.screenshot_b64 else 0} chars")
+        
         # Validate inputs
-        if not query:
+        if not request.query:
             return {
                 "success": False,
-                "error": "Query parameter is required. Make sure the 'query' field is checked in Postman form-data.",
+                "error": "Query parameter is required",
                 "text": "Missing query",
                 "decision": "normal"
             }
         
-        if not screenshot:
+        if not request.screenshot_b64:
             return {
                 "success": False,
-                "error": "Screenshot file is required. Make sure the 'screenshot' field is checked in Postman form-data.",
+                "error": "Screenshot is required",
                 "text": "Missing screenshot",
                 "decision": "normal"
             }
         
         from agent.live_agent import analyze_live_query
-        import base64
         
-        # Read image file and convert to base64
-        image_data = await screenshot.read()
+        result = await analyze_live_query(request.screenshot_b64, request.query)
         
-        if not image_data:
-            raise HTTPException(status_code=400, detail="Screenshot file is empty")
+        print(f"\n{'='*60}")
+        print(f"LIVE QUERY RESPONSE")
+        print(f"{'='*60}")
+        print(f"Success: {result.get('success')}")
+        print(f"Decision: {result.get('decision')}")
+        print(f"Text: {result.get('text')}")
+        if result.get('fields'):
+            print(f"Fields ({len(result['fields'])}):")
+            for field in result['fields']:
+                print(f"  - {field.get('label')}: {field.get('value')}")
+        if result.get('error'):
+            print(f"Error: {result.get('error')}")
+        print(f"{'='*60}\n")
         
-        screenshot_b64 = base64.b64encode(image_data).decode('utf-8')
-        
-        result = await analyze_live_query(screenshot_b64, query)
         return result
         
     except Exception as e:
+        import traceback
+        print(f"\n{'='*60}")
+        print(f"LIVE QUERY ERROR")
+        print(f"{'='*60}")
+        print(f"Error: {str(e)}")
+        print(traceback.format_exc())
+        print(f"{'='*60}\n")
+        
         return {
             "success": False,
             "error": str(e),

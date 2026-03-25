@@ -10,6 +10,7 @@ function ChromeSandbox() {
   const [magicFillStatus, setMagicFillStatus] = useState<string | null>(null);
   const [formFieldCount, setFormFieldCount] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
+  const [liveQueryStatus, setLiveQueryStatus] = useState<string | null>(null);
 
   async function launchChrome() {
     setIsLaunchingChrome(true);
@@ -157,6 +158,7 @@ function ChromeSandbox() {
           if (isRecording && !recording) {
             console.log('Recording stopped, retrieving audio...');
             setIsRecording(false);
+            setLiveQueryStatus('🎤 Processing voice...');
 
             // Wait a bit for audio to be ready
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -166,6 +168,7 @@ function ChromeSandbox() {
 
               if (audioBase64) {
                 console.log('Transcribing...');
+                setLiveQueryStatus('🔄 Transcribing audio...');
 
                 // Send to backend for transcription
                 const response = await fetch('http://localhost:8000/voice-transcribe', {
@@ -186,19 +189,95 @@ function ChromeSandbox() {
                     if (data.translated_text !== data.transcribed_text) {
                       console.log('English:', data.translated_text);
                     }
+
+                    setLiveQueryStatus(`📝 "${data.translated_text}"`);
+
+                    // Now capture screenshot and send to live-query endpoint
+                    console.log('📸 Capturing screenshot for live query...');
+                    setLiveQueryStatus('📸 Analyzing page...');
+                    const screenshotB64 = await invoke<string>('capture_screenshot');
+
+                    // Send to live-query endpoint
+                    console.log('\n' + '='.repeat(60));
+                    console.log('SENDING TO LIVE QUERY ENDPOINT');
+                    console.log('='.repeat(60));
+                    console.log('Query:', data.translated_text);
+                    console.log('Screenshot length:', screenshotB64.length, 'chars');
+                    
+                    const liveQueryResponse = await fetch('http://localhost:8000/live-query', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        screenshot_b64: screenshotB64,
+                        query: data.translated_text  // Use translated English text
+                      })
+                    });
+
+                    if (liveQueryResponse.ok) {
+                      const liveData = await liveQueryResponse.json();
+                      
+                      console.log('\n' + '='.repeat(60));
+                      console.log('LIVE QUERY RESPONSE RECEIVED');
+                      console.log('='.repeat(60));
+                      console.log('Full Response:', JSON.stringify(liveData, null, 2));
+                      console.log('='.repeat(60));
+                      
+                      if (liveData.success) {
+                        console.log('🤖 Live Agent Response:', liveData.text);
+                        console.log('📊 Decision:', liveData.decision);
+
+                        // If decision is "fill", auto-fill the form
+                        if (liveData.decision === 'fill' && liveData.fields && liveData.fields.length > 0) {
+                          console.log('🔄 Auto-filling form fields...');
+                          console.log('Fields to fill:', JSON.stringify(liveData.fields, null, 2));
+                          setLiveQueryStatus(`🔄 Filling ${liveData.fields.length} fields...`);
+                          
+                          // Convert fields to fill_data format
+                          const fillData = liveData.fields.map((field: any) => ({
+                            label: field.label,
+                            value: field.value,
+                            action: 'fill'
+                          }));
+
+                          console.log('Fill data:', JSON.stringify(fillData, null, 2));
+
+                          // Fill the form
+                          const fillResult = await invoke<string>('fill_form_fields', {
+                            fillData: fillData
+                          });
+
+                          console.log('✅', fillResult);
+                          setLiveQueryStatus(`✅ ${fillResult}`);
+                        } else {
+                          // Just show the response
+                          console.log('ℹ️ Information response (no fill needed)');
+                          setLiveQueryStatus(`ℹ️ ${liveData.text}`);
+                        }
+                      } else {
+                        console.error('❌ Live query error:', liveData.error);
+                        setLiveQueryStatus(`❌ ${liveData.error}`);
+                      }
+                    } else {
+                      console.error('❌ Live query failed:', liveQueryResponse.statusText);
+                      setLiveQueryStatus(`❌ Failed to analyze: ${liveQueryResponse.statusText}`);
+                    }
                   } else {
                     console.error('❌ Error:', data.error);
+                    setLiveQueryStatus(`❌ Transcription failed: ${data.error}`);
                   }
                 } else {
                   console.error('❌ Failed:', response.statusText);
+                  setLiveQueryStatus(`❌ Failed: ${response.statusText}`);
                 }
               }
             } catch (error) {
               console.error('Audio retrieval error:', error);
+              setLiveQueryStatus(`❌ Error: ${error}`);
             }
           } else if (!isRecording && recording) {
             // Recording started
             setIsRecording(true);
+            setLiveQueryStatus('🎤 Recording...');
             console.log('🎤 Recording started...');
           }
         } catch (error) {
@@ -286,6 +365,20 @@ function ChromeSandbox() {
           }`}>
           <p className="font-semibold text-white mb-2">Magic Fill Status:</p>
           <p className="text-gray-300">{magicFillStatus}</p>
+        </div>
+      )}
+
+      {liveQueryStatus && (
+        <div className={`w-full max-w-2xl mt-4 p-5 rounded-2xl border-2 backdrop-blur-sm ${liveQueryStatus.includes('✅')
+          ? 'bg-green-900/30 border-green-500/50'
+          : liveQueryStatus.includes('❌')
+            ? 'bg-red-900/30 border-red-500/50'
+            : liveQueryStatus.includes('🎤')
+              ? 'bg-purple-900/30 border-purple-500/50'
+              : 'bg-blue-900/30 border-blue-500/50'
+          }`}>
+          <p className="font-semibold text-white mb-2">Voice Query Status:</p>
+          <p className="text-gray-300 whitespace-pre-wrap">{liveQueryStatus}</p>
         </div>
       )}
     </div>
