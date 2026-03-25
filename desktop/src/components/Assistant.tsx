@@ -136,15 +136,22 @@ export default function Assistant() {
               const injectionResult = await invoke<string>('inject_magic_fill_button');
               const injectionData = JSON.parse(injectionResult);
 
+              // Also inject Voice button
+              await invoke<string>('inject_voice_button');
+
               if (injectionData.injected) {
                 setMessages(prev => [...prev, {
                   role: 'assistant',
-                  content: `✓ CDP browser opened and navigated to:\n${data.link}\n\n✨ Magic Fill button injected! (${injectionData.fieldCount} fields detected)\n\nClick the purple Magic Fill button on the webpage to auto-fill the form.`
+                  content: `✓ CDP browser opened and navigated to:\n${data.link}\n\n✨ Magic Fill button injected! (${injectionData.fieldCount} fields detected)\n🎤 Voice button injected!\n\nClick the purple Magic Fill button or use voice commands to auto-fill the form.`
                 }]);
 
-                // Start monitoring for Magic Fill button clicks
+                // Track recording state
+                let isRecording = false;
+
+                // Start monitoring for Magic Fill button clicks AND voice input
                 const monitorInterval = setInterval(async () => {
                   try {
+                    // Check Magic Fill button
                     const clicked = await invoke<boolean>('check_magic_fill_clicked');
                     if (clicked) {
                       clearInterval(monitorInterval);
@@ -190,6 +197,128 @@ export default function Assistant() {
                           }]);
                         }
                       }
+                    }
+
+                    // Check voice recording state
+                    const recording = await invoke<boolean>('check_voice_recording_state');
+
+                    // Detect when recording stops
+                    if (isRecording && !recording) {
+                      console.log('Recording stopped, processing voice input...');
+                      isRecording = false;
+
+                      setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: `🎤 Processing voice input...`
+                      }]);
+
+                      // Wait for audio to be ready
+                      await new Promise(resolve => setTimeout(resolve, 500));
+
+                      try {
+                        const audioBase64 = await invoke<string>('get_recorded_audio');
+
+                        if (audioBase64) {
+                          // Transcribe audio
+                          const transcribeResponse = await fetch('http://localhost:8000/voice-transcribe', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              audio_base64: audioBase64,
+                              language_code: 'auto'
+                            })
+                          });
+
+                          if (transcribeResponse.ok) {
+                            const transcribeData = await transcribeResponse.json();
+                            if (transcribeData.success) {
+                              setMessages(prev => [...prev, {
+                                role: 'assistant',
+                                content: `📝 You said: "${transcribeData.translated_text}"\n\n🔄 Analyzing page...`
+                              }]);
+
+                              // Capture screenshot
+                              const screenshotB64 = await invoke<string>('capture_screenshot');
+
+                              // Send to live-query endpoint
+                              const liveQueryResponse = await fetch('http://localhost:8000/live-query', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  screenshot_b64: screenshotB64,
+                                  query: transcribeData.translated_text
+                                })
+                              });
+
+                              if (liveQueryResponse.ok) {
+                                const liveData = await liveQueryResponse.json();
+                                if (liveData.success) {
+                                  // If decision is "inject", fill the form
+                                  if (liveData.decision === 'inject' && liveData.fields && liveData.fields.length > 0) {
+                                    setMessages(prev => [...prev, {
+                                      role: 'assistant',
+                                      content: `💉 Filling ${liveData.fields.length} fields...`
+                                    }]);
+
+                                    // Extract form fields to get IDs
+                                    const formFields = await invoke<any[]>('extract_form_fields');
+
+                                    // Match labels to IDs
+                                    const fillData: any[] = [];
+                                    for (const liveField of liveData.fields) {
+                                      const label = liveField.label.toLowerCase().trim();
+                                      const matchingField = formFields.find((field: any) => {
+                                        const fieldLabel = (field.label || '').toLowerCase().trim();
+                                        const fieldName = (field.name || '').toLowerCase().trim();
+                                        const fieldId = (field.id || '').toLowerCase().trim();
+                                        return fieldLabel.includes(label) || label.includes(fieldLabel) ||
+                                               fieldName.includes(label) || label.includes(fieldName) ||
+                                               fieldId.includes(label);
+                                      });
+
+                                      if (matchingField && matchingField.id) {
+                                        fillData.push({
+                                          id: matchingField.id,
+                                          value: liveField.value,
+                                          action: 'fill'
+                                        });
+                                      }
+                                    }
+
+                                    if (fillData.length > 0) {
+                                      const fillResult = await invoke<string>('fill_form_fields', {
+                                        fillData: fillData
+                                      });
+
+                                      setMessages(prev => [...prev, {
+                                        role: 'assistant',
+                                        content: `✅ ${fillResult}`
+                                      }]);
+                                    } else {
+                                      setMessages(prev => [...prev, {
+                                        role: 'assistant',
+                                        content: `⚠️ Could not match fields to fill`
+                                      }]);
+                                    }
+                                  } else {
+                                    // Normal query - show response
+                                    setMessages(prev => [...prev, {
+                                      role: 'assistant',
+                                      content: `ℹ️ ${liveData.text}`
+                                    }]);
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      } catch (error) {
+                        console.error('Voice processing error:', error);
+                      }
+                    } else if (!isRecording && recording) {
+                      // Recording started
+                      isRecording = true;
+                      console.log('🎤 Recording started...');
                     }
                   } catch (error) {
                     // Silently ignore errors during monitoring

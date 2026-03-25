@@ -226,31 +226,71 @@ function ChromeSandbox() {
                         console.log('🤖 Live Agent Response:', liveData.text);
                         console.log('📊 Decision:', liveData.decision);
 
-                        // If decision is "fill", auto-fill the form
-                        if (liveData.decision === 'fill' && liveData.fields && liveData.fields.length > 0) {
-                          console.log('🔄 Auto-filling form fields...');
-                          console.log('Fields to fill:', JSON.stringify(liveData.fields, null, 2));
-                          setLiveQueryStatus(`🔄 Filling ${liveData.fields.length} fields...`);
+                        // If decision is "inject", auto-fill the form via CDP
+                        if (liveData.decision === 'inject' && liveData.fields && liveData.fields.length > 0) {
+                          console.log('💉 Injecting form data via CDP...');
+                          console.log('Fields to inject:', JSON.stringify(liveData.fields, null, 2));
+                          setLiveQueryStatus(`💉 Injecting ${liveData.fields.length} fields via CDP...`);
                           
-                          // Convert fields to fill_data format
-                          const fillData = liveData.fields.map((field: any) => ({
-                            label: field.label,
-                            value: field.value,
-                            action: 'fill'
-                          }));
+                          try {
+                            // First, extract current form fields to get IDs
+                            const formFields = await invoke<any[]>('extract_form_fields');
+                            console.log('Extracted form fields:', JSON.stringify(formFields, null, 2));
+                            
+                            // Match labels from live query to IDs from form fields
+                            const fillData: any[] = [];
+                            
+                            for (const liveField of liveData.fields) {
+                              const label = liveField.label.toLowerCase().trim();
+                              const value = liveField.value;
+                              
+                              // Find matching field by label
+                              const matchingField = formFields.find((field: any) => {
+                                const fieldLabel = (field.label || '').toLowerCase().trim();
+                                const fieldName = (field.name || '').toLowerCase().trim();
+                                const fieldId = (field.id || '').toLowerCase().trim();
+                                
+                                // Match by label, name, or id
+                                return fieldLabel.includes(label) || 
+                                       label.includes(fieldLabel) ||
+                                       fieldName.includes(label) ||
+                                       label.includes(fieldName) ||
+                                       fieldId.includes(label);
+                              });
+                              
+                              if (matchingField && matchingField.id) {
+                                console.log(`✓ Matched "${liveField.label}" to field ID: ${matchingField.id}`);
+                                fillData.push({
+                                  id: matchingField.id,
+                                  value: value,
+                                  action: 'fill'
+                                });
+                              } else {
+                                console.warn(`✗ Could not find field for label: ${liveField.label}`);
+                              }
+                            }
+                            
+                            if (fillData.length > 0) {
+                              console.log('CDP Fill data:', JSON.stringify(fillData, null, 2));
+                              
+                              // Fill the form using existing command
+                              const fillResult = await invoke<string>('fill_form_fields', {
+                                fillData: fillData
+                              });
 
-                          console.log('Fill data:', JSON.stringify(fillData, null, 2));
-
-                          // Fill the form
-                          const fillResult = await invoke<string>('fill_form_fields', {
-                            fillData: fillData
-                          });
-
-                          console.log('✅', fillResult);
-                          setLiveQueryStatus(`✅ ${fillResult}`);
+                              console.log('✅', fillResult);
+                              setLiveQueryStatus(`✅ ${fillResult}`);
+                            } else {
+                              console.error('No matching fields found');
+                              setLiveQueryStatus('❌ Could not match any fields to fill');
+                            }
+                          } catch (error) {
+                            console.error('Form filling failed:', error);
+                            setLiveQueryStatus(`❌ Error: ${error}`);
+                          }
                         } else {
-                          // Just show the response
-                          console.log('ℹ️ Information response (no fill needed)');
+                          // Just show the response (normal query)
+                          console.log('ℹ️ Information response (no injection needed)');
                           setLiveQueryStatus(`ℹ️ ${liveData.text}`);
                         }
                       } else {
