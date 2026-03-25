@@ -30,4 +30,5 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "uvicorn[standard]>=0.32.0",
     "langchain-groq>=1.1.2",
+    "playwright>=1.58.0",
 ]

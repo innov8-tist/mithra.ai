@@ -12,7 +12,8 @@ groq_key = os.getenv("GROQ_API_KEY")
 
 class ExtractIdMatching(BaseModel):
     """Structured output for service ID extraction"""
-    id: int = Field(description="Extract the id of the matching service from the user query")
+    id: int = Field(description="Extract the id of the matching service from the user query. Return -1 if no service matches. MUST be an integer number.")
+    reason: str = Field(description="Brief reason for the match or why no match was found")
 
 
 class NavigationAgent:
@@ -59,6 +60,7 @@ class NavigationAgent:
     def llm_invoke(self, query: str) -> Dict[str, Any]:
         """
         Match user query to a service and return the service details
+        If no match found, use AI to find the link
         """
         try:
             # Create structured LLM
@@ -75,34 +77,72 @@ Match the user's query to the most appropriate service from this list:
 
 {services_text}
 
-Return the ID of the best matching service.""")
+If the query matches one of these services, return its ID as an INTEGER.
+If the query does NOT match any service, return -1 as an INTEGER.""")
             
             user_msg = HumanMessage(content=f"Find the service for: {query}")
             
             response = structured_llm.invoke([system_msg, user_msg])
-            service_id = response.id
+            service_id = int(response.id)  # Ensure it's an integer
             
-            # Find the matching service
-            matched_service = next(
-                (s for s in self.services if s["id"] == service_id),
-                None
-            )
+            # If service found in list
+            if service_id > 0:
+                matched_service = next(
+                    (s for s in self.services if s["id"] == service_id),
+                    None
+                )
+                
+                if matched_service:
+                    return {
+                        "success": True,
+                        "link": matched_service["link"]
+                    }
             
-            if matched_service:
-                return {
-                    "success": True,
-                    "link": matched_service["link"]
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": "No matching service found"
-                }
+            # Service not in list - use AI to find link
+            print(f"Service not in predefined list. Using AI to find link for: {query}")
+            return self._find_link_with_ai(query)
                 
         except Exception as e:
             return {
                 "success": False,
                 "error": str(e)
+            }
+    
+    def _find_link_with_ai(self, query: str) -> Dict[str, Any]:
+        """
+        Use AI to find the official link for the service
+        """
+        try:
+            system_msg = SystemMessage(content="""You are a helpful assistant that finds official government service links.
+Given a user's query about a government service or application, provide the official website link.
+
+IMPORTANT:
+- Only provide official government websites (.gov.in, .gov, etc.)
+- If you're not sure about the exact link, provide the main government portal
+- Be accurate and provide working links
+- Format: Just provide the URL, nothing else""")
+            
+            user_msg = HumanMessage(content=f"Find the official website link for: {query}")
+            
+            response = self.llm.invoke([system_msg, user_msg])
+            link = response.content.strip()
+            
+            # Basic validation
+            if link.startswith("http"):
+                return {
+                    "success": True,
+                    "link": link
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Could not find a valid link for this service"
+                }
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"AI link search failed: {str(e)}"
             }
 
 
