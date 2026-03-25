@@ -49,11 +49,17 @@ class LiveAgent:
             Dictionary with text response and decision
         """
         try:
+            print(f"\n{'='*60}")
+            print(f"LIVE AGENT - ANALYZING SCREENSHOT")
+            print(f"{'='*60}")
+            print(f"Query: {query}")
+            
             # Decode base64 image
             if ',' in screenshot_b64:
                 screenshot_b64 = screenshot_b64.split(',')[1]
             
             image_data = base64.b64decode(screenshot_b64)
+            print(f"Image size: {len(image_data)} bytes")
             
             # First, determine the decision
             decision_prompt = f"""You are a helpful assistant analyzing a screenshot with a user query.
@@ -70,6 +76,7 @@ Response format:
   "decision": "fill" or "normal"
 }}"""
 
+            print(f"\nCalling Gemini Vision API...")
             # Call Gemini Vision API for decision
             response = self.model.generate_content([
                 decision_prompt,
@@ -77,6 +84,7 @@ Response format:
             ])
             
             response_text = response.text.strip()
+            print(f"\nGemini Raw Response:\n{response_text}")
             
             # Try to extract JSON from response
             import json
@@ -88,15 +96,25 @@ Response format:
                 result = json.loads(json_match.group())
                 text = result.get("text", response_text)
                 decision = result.get("decision", "normal")
+                print(f"\nParsed Decision: {decision}")
+                print(f"Parsed Text: {text}")
             else:
                 # Fallback: analyze text for decision
                 query_lower = query.lower()
                 decision = "fill" if any(kw in query_lower for kw in ["fill", "autofill", "complete", "enter my"]) else "normal"
                 text = response_text
+                print(f"\nFallback Decision: {decision}")
             
             # If decision is "fill", extract form fields and get values from RAG
             if decision == "fill":
+                print(f"\n{'='*60}")
+                print(f"EXTRACTING FORM FIELDS (Decision: fill)")
+                print(f"{'='*60}")
                 fields_data = await self._extract_form_fields(image_data, query)
+                
+                print(f"\nExtracted {len(fields_data)} fields:")
+                for field in fields_data:
+                    print(f"  - {field.get('label')}: {field.get('value')}")
                 
                 return {
                     "success": True,
@@ -105,6 +123,7 @@ Response format:
                     "fields": fields_data
                 }
             else:
+                print(f"\nNo field extraction needed (Decision: normal)")
                 return {
                     "success": True,
                     "text": text,
@@ -112,6 +131,14 @@ Response format:
                 }
             
         except Exception as e:
+            import traceback
+            print(f"\n{'='*60}")
+            print(f"ERROR IN ANALYZE_SCREENSHOT")
+            print(f"{'='*60}")
+            print(f"Error: {str(e)}")
+            print(traceback.format_exc())
+            print(f"{'='*60}\n")
+            
             return {
                 "success": False,
                 "error": str(e),
@@ -125,6 +152,11 @@ Response format:
         and get values from RAG (user's documents) or AI generation
         """
         try:
+            print(f"\n{'='*60}")
+            print(f"EXTRACTING FORM FIELDS")
+            print(f"{'='*60}")
+            print(f"Query: {query}")
+            
             # First, identify which fields the user is asking about
             extract_prompt = f"""Analyze this form screenshot based on the user's query.
 
@@ -152,12 +184,14 @@ Examples:
 
 IMPORTANT: Only return the specific field(s) mentioned in the user's query."""
 
+            print(f"\nCalling Gemini Vision for field extraction...")
             response = self.model.generate_content([
                 extract_prompt,
                 {"mime_type": "image/png", "data": image_data}
             ])
             
             response_text = response.text.strip()
+            print(f"\nGemini Field Extraction Response:\n{response_text}")
             
             # Extract JSON array
             import json
@@ -166,9 +200,15 @@ IMPORTANT: Only return the specific field(s) mentioned in the user's query."""
             # Find JSON array in response
             json_match = re.search(r'\[.*\]', response_text, re.DOTALL)
             if not json_match:
+                print("No JSON array found in response")
                 return []
             
             fields_info = json.loads(json_match.group())
+            print(f"\nParsed {len(fields_info)} field(s):")
+            for field in fields_info:
+                print(f"  - Label: {field.get('label')}")
+                print(f"    Type: {field.get('field_type')}")
+                print(f"    Info: {field.get('info_type')}")
             
             # Now get value for each field
             from agent.retriver_service import Retriver
@@ -179,29 +219,50 @@ IMPORTANT: Only return the specific field(s) mentioned in the user's query."""
                 field_type = field.get("field_type", "personal")
                 info_type = field.get("info_type", "")
                 
+                print(f"\n--- Processing field: {label} ---")
+                
                 if field_type == "personal":
                     # Query RAG for personal data
                     rag_query = f"What is my {info_type}?"
+                    print(f"RAG Query: {rag_query}")
                     rag_result = await Retriver(rag_query)
                     
                     # Extract the value from RAG result
                     value = rag_result.get("result", "").strip()
+                    print(f"RAG Raw Result: {value}")
                     
                     # Clean up the value
                     value = self._clean_rag_value(value, info_type)
+                    print(f"Cleaned Value: {value}")
                 else:
                     # Generate subjective/opinion content with AI
+                    print(f"Generating subjective content for: {info_type}")
                     value = await self._generate_subjective_value(info_type, label)
+                    print(f"Generated Value: {value}")
                 
                 result_fields.append({
                     "label": label,
                     "value": value
                 })
             
+            print(f"\n{'='*60}")
+            print(f"FIELD EXTRACTION COMPLETE")
+            print(f"{'='*60}")
+            print(f"Total fields: {len(result_fields)}")
+            for field in result_fields:
+                print(f"  {field['label']}: {field['value']}")
+            print(f"{'='*60}\n")
+            
             return result_fields
                 
         except Exception as e:
-            print(f"Error extracting form fields: {e}")
+            import traceback
+            print(f"\n{'='*60}")
+            print(f"ERROR IN EXTRACT_FORM_FIELDS")
+            print(f"{'='*60}")
+            print(f"Error: {str(e)}")
+            print(traceback.format_exc())
+            print(f"{'='*60}\n")
             return []
     
     async def _generate_subjective_value(self, info_type: str, label: str) -> str:
