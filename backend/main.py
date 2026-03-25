@@ -55,6 +55,11 @@ class LiveQueryRequest(BaseModel):
     query: str
 
 
+class VoiceTranscribeRequest(BaseModel):
+    audio_base64: str
+    language_code: str = "auto"  # Auto-detect language
+
+
 class VisionMagicFillRequest(BaseModel):
     screenshot_b64: str
     fields: list[dict]
@@ -194,6 +199,120 @@ async def close_browser():
     
     result = close_browser_instance()
     return result
+
+
+@app.post("/voice-transcribe")
+async def voice_transcribe(request: VoiceTranscribeRequest):
+    """
+    Transcribe audio using Sarvam AI
+    Supports: Malayalam (ml-IN), English (en-IN), Hindi (hi-IN), and more
+    """
+    import httpx
+    import base64
+    import io
+    
+    SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
+    if not SARVAM_API_KEY:
+        return {"success": False, "error": "SARVAM_API_KEY not set in .env"}
+    
+    try:
+        # Decode base64 audio
+        audio_bytes = base64.b64decode(request.audio_base64)
+        
+        # Try multiple languages if auto-detect
+        languages_to_try = []
+        if request.language_code == "auto":
+            languages_to_try = ["ml-IN", "en-IN", "hi-IN"]  # Malayalam, English, Hindi
+        else:
+            languages_to_try = [request.language_code]
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for lang_code in languages_to_try:
+                try:
+                    print(f"Trying transcription with language: {lang_code}")
+                    
+                    # Sarvam expects multipart/form-data with file upload
+                    files = {
+                        'file': ('audio.webm', audio_bytes, 'audio/webm')
+                    }
+                    data = {
+                        'language_code': lang_code
+                    }
+                    
+                    transcribe_response = await client.post(
+                        "https://api.sarvam.ai/speech-to-text",
+                        headers={
+                            "api-subscription-key": SARVAM_API_KEY
+                        },
+                        files=files,
+                        data=data
+                    )
+                    
+                    if transcribe_response.status_code == 200:
+                        transcribe_data = transcribe_response.json()
+                        transcribed_text = transcribe_data.get("transcript", "")
+                        
+                        if transcribed_text and transcribed_text.strip():
+                            print(f"✅ Transcribed ({lang_code}): {transcribed_text}")
+                            
+                            # Translate to English if not already English
+                            translated_text = transcribed_text
+                            if lang_code != "en-IN":
+                                try:
+                                    print(f"Translating from {lang_code} to en-IN...")
+                                    translate_response = await client.post(
+                                        "https://api.sarvam.ai/translate",
+                                        headers={
+                                            "api-subscription-key": SARVAM_API_KEY,
+                                            "Content-Type": "application/json"
+                                        },
+                                        json={
+                                            "input": transcribed_text,
+                                            "source_language_code": lang_code,
+                                            "target_language_code": "en-IN",
+                                            "speaker_gender": "Male",
+                                            "mode": "formal",
+                                            "model": "mayura:v1",
+                                            "enable_preprocessing": True
+                                        }
+                                    )
+                                    
+                                    if translate_response.status_code == 200:
+                                        translate_data = translate_response.json()
+                                        translated_text = translate_data.get("translated_text", transcribed_text)
+                                        print(f"✅ Translated to English: {translated_text}")
+                                    else:
+                                        print(f"Translation failed: {translate_response.text}")
+                                except Exception as e:
+                                    print(f"Translation error: {e}")
+                            
+                            return {
+                                "success": True,
+                                "transcribed_text": transcribed_text,
+                                "translated_text": translated_text,
+                                "language": lang_code
+                            }
+                    else:
+                        print(f"Failed with {lang_code}: {transcribe_response.text}")
+                        
+                except Exception as e:
+                    print(f"Error with {lang_code}: {e}")
+                    continue
+            
+            # If all languages failed
+            return {
+                "success": False,
+                "error": "Could not transcribe audio in any supported language"
+            }
+                
+    except Exception as e:
+        import traceback
+        print(f"Voice transcribe error: {e}")
+        print(traceback.format_exc())
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 
 @app.post("/live-query")

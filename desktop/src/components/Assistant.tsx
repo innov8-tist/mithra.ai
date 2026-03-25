@@ -148,7 +148,7 @@ export default function Assistant() {
                     const clicked = await invoke<boolean>('check_magic_fill_clicked');
                     if (clicked) {
                       clearInterval(monitorInterval);
-                      
+
                       setMessages(prev => [...prev, {
                         role: 'assistant',
                         content: `🔄 Magic Fill button clicked! Processing form...`
@@ -156,10 +156,10 @@ export default function Assistant() {
 
                       // Capture screenshot
                       const screenshotB64 = await invoke<string>('capture_screenshot');
-                      
+
                       // Extract form fields
                       const fields = await invoke<any[]>('extract_form_fields');
-                      
+
                       // Send to backend for processing
                       const response = await fetch('http://localhost:8000/vision-magicfill', {
                         method: 'POST',
@@ -178,7 +178,7 @@ export default function Assistant() {
                           const fillResult = await invoke<string>('fill_form_fields', {
                             fillData: fillData.fill_data,
                           });
-                          
+
                           setMessages(prev => [...prev, {
                             role: 'assistant',
                             content: `✅ ${fillResult}`
@@ -262,8 +262,8 @@ export default function Assistant() {
           <button
             onClick={() => { setChatMode('autofill'); setShowModeSelector(false); }}
             className={`w-full flex items-start gap-3 px-3 py-3 rounded-lg mb-1 transition-all duration-200 ${chatMode === 'autofill'
-                ? 'bg-blue-500/20 border border-blue-500/30'
-                : 'hover:bg-white/5'
+              ? 'bg-blue-500/20 border border-blue-500/30'
+              : 'hover:bg-white/5'
               }`}
           >
             <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -281,8 +281,8 @@ export default function Assistant() {
           <button
             onClick={() => { setChatMode('advisor'); setShowModeSelector(false); }}
             className={`w-full flex items-start gap-3 px-3 py-3 rounded-lg transition-all duration-200 ${chatMode === 'advisor'
-                ? 'bg-blue-500/20 border border-blue-500/30'
-                : 'hover:bg-white/5'
+              ? 'bg-blue-500/20 border border-blue-500/30'
+              : 'hover:bg-white/5'
               }`}
           >
             <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -358,8 +358,8 @@ export default function Assistant() {
               >
                 <div
                   className={`max-w-[70%] px-5 py-3 rounded-2xl whitespace-pre-wrap ${msg.role === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white/5 backdrop-blur-sm border border-white/10 text-gray-200'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white/5 backdrop-blur-sm border border-white/10 text-gray-200'
                     }`}
                 >
                   <MessageContent content={msg.content} />

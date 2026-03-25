@@ -9,6 +9,7 @@ function ChromeSandbox() {
   const [isMagicFilling, setIsMagicFilling] = useState(false);
   const [magicFillStatus, setMagicFillStatus] = useState<string | null>(null);
   const [formFieldCount, setFormFieldCount] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
 
   async function launchChrome() {
     setIsLaunchingChrome(true);
@@ -50,6 +51,18 @@ function ChromeSandbox() {
       }
     } catch (error) {
       console.log('Button injection error:', error);
+    }
+  }
+
+  async function injectVoiceButton() {
+    try {
+      const result = await invoke<string>('inject_voice_button');
+      const data = JSON.parse(result);
+      if (data.injected) {
+        console.log('Voice button injected');
+      }
+    } catch (error) {
+      console.log('Voice button injection error:', error);
     }
   }
 
@@ -108,15 +121,18 @@ function ChromeSandbox() {
   useEffect(() => {
     let urlInterval: number | undefined;
     let clickInterval: number | undefined;
+    let voiceInterval: number | undefined;
 
     if (isMonitoring) {
       console.log('Starting monitoring intervals...');
       getCurrentTab();
       injectMagicFillButton();
-      
+      injectVoiceButton();
+
       urlInterval = window.setInterval(() => {
         getCurrentTab();
         injectMagicFillButton();
+        injectVoiceButton();
       }, 2000);
 
       // Start checking for button clicks
@@ -131,6 +147,64 @@ function ChromeSandbox() {
           // Silently ignore errors when button not injected yet
         }
       }, 500);
+
+      // Monitor voice recording state
+      voiceInterval = window.setInterval(async () => {
+        try {
+          const recording = await invoke<boolean>('check_voice_recording_state');
+
+          // Detect when recording stops
+          if (isRecording && !recording) {
+            console.log('Recording stopped, retrieving audio...');
+            setIsRecording(false);
+
+            // Wait a bit for audio to be ready
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            try {
+              const audioBase64 = await invoke<string>('get_recorded_audio');
+
+              if (audioBase64) {
+                console.log('Transcribing...');
+
+                // Send to backend for transcription
+                const response = await fetch('http://localhost:8000/voice-transcribe', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    audio_base64: audioBase64,
+                    language_code: 'auto'  // Auto-detect Malayalam or English
+                  })
+                });
+
+                if (response.ok) {
+                  const data = await response.json();
+                  if (data.success) {
+                    console.log('✅ Transcription successful!');
+                    console.log('Language:', data.language);
+                    console.log('Original:', data.transcribed_text);
+                    if (data.translated_text !== data.transcribed_text) {
+                      console.log('English:', data.translated_text);
+                    }
+                  } else {
+                    console.error('❌ Error:', data.error);
+                  }
+                } else {
+                  console.error('❌ Failed:', response.statusText);
+                }
+              }
+            } catch (error) {
+              console.error('Audio retrieval error:', error);
+            }
+          } else if (!isRecording && recording) {
+            // Recording started
+            setIsRecording(true);
+            console.log('🎤 Recording started...');
+          }
+        } catch (error) {
+          // Silently ignore errors
+        }
+      }, 500);
     }
 
     return () => {
@@ -140,8 +214,11 @@ function ChromeSandbox() {
       if (clickInterval) {
         clearInterval(clickInterval);
       }
+      if (voiceInterval) {
+        clearInterval(voiceInterval);
+      }
     };
-  }, [isMonitoring, isMagicFilling]);
+  }, [isMonitoring, isMagicFilling, isRecording]);
 
   return (
     <div className="h-full flex flex-col items-center pt-12 px-8">
@@ -151,9 +228,8 @@ function ChromeSandbox() {
       <div className="flex gap-6 mb-8">
         <div
           onClick={!isLaunchingChrome ? launchChrome : undefined}
-          className={`w-64 p-6 bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl hover:shadow-2xl transition-all cursor-pointer ${
-            isLaunchingChrome ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
-          }`}
+          className={`w-64 p-6 bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl hover:shadow-2xl transition-all cursor-pointer ${isLaunchingChrome ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
+            }`}
         >
           <div className="w-14 h-14 bg-white/20 rounded-xl flex items-center justify-center text-white mb-4">
             <GlobeIcon />
@@ -165,11 +241,10 @@ function ChromeSandbox() {
         </div>
 
         {isMonitoring && (
-          <div 
+          <div
             onClick={!isMagicFilling ? handleMagicFill : undefined}
-            className={`w-64 p-6 bg-gradient-to-br from-purple-600 to-purple-700 rounded-xl hover:shadow-2xl transition-all cursor-pointer ${
-              isMagicFilling ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
-            }`}
+            className={`w-64 p-6 bg-gradient-to-br from-purple-600 to-purple-700 rounded-xl hover:shadow-2xl transition-all cursor-pointer ${isMagicFilling ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105'
+              }`}
           >
             <div className="w-14 h-14 bg-white/20 rounded-xl flex items-center justify-center text-white mb-4">
               <MagicIcon />
@@ -203,13 +278,12 @@ function ChromeSandbox() {
       )}
 
       {magicFillStatus && (
-        <div className={`w-full max-w-2xl mt-4 p-5 rounded-2xl border-2 backdrop-blur-sm ${
-          magicFillStatus.includes('✅') 
-            ? 'bg-green-900/30 border-green-500/50' 
-            : magicFillStatus.includes('Error') 
+        <div className={`w-full max-w-2xl mt-4 p-5 rounded-2xl border-2 backdrop-blur-sm ${magicFillStatus.includes('✅')
+          ? 'bg-green-900/30 border-green-500/50'
+          : magicFillStatus.includes('Error')
             ? 'bg-red-900/30 border-red-500/50'
             : 'bg-yellow-900/30 border-yellow-500/50'
-        }`}>
+          }`}>
           <p className="font-semibold text-white mb-2">Magic Fill Status:</p>
           <p className="text-gray-300">{magicFillStatus}</p>
         </div>
