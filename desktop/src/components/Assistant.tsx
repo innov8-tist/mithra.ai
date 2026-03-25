@@ -15,9 +15,12 @@ export default function Assistant() {
   const [showModeSelector, setShowModeSelector] = useState(false);
   const [popupPos, setPopupPos] = useState({ bottom: 0, left: 0 });
   const [isLoading, setIsLoading] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const popupRef = useRef<HTMLDivElement>(null);
   const modeButtonRef = useRef<HTMLButtonElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -242,6 +245,95 @@ export default function Assistant() {
     }
   };
 
+  const handleVoiceInput = async () => {
+    if (isRecording) {
+      // Stop recording
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+      setIsRecording(false);
+    } else {
+      // Start recording
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          
+          // Convert to base64
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = async () => {
+            const base64Audio = reader.result as string;
+            const base64Data = base64Audio.split(',')[1]; // Remove data:audio/webm;base64, prefix
+
+            // Send to backend for transcription
+            try {
+              const response = await fetch(`${API_BASE_URL}/voice-transcribe`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  audio_base64: base64Data,
+                  language_code: 'auto', // Auto-detect language
+                }),
+              });
+
+              if (response.ok) {
+                const data = await response.json();
+                if (data.success) {
+                  // Use translated text (English) for processing
+                  const transcribedText = data.translated_text || data.transcribed_text;
+                  setMessage(transcribedText);
+                } else {
+                  console.error('Transcription failed:', data.error);
+                  setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    content: `❌ Voice transcription failed: ${data.error}`
+                  }]);
+                }
+              } else {
+                console.error('Transcription request failed');
+                setMessages(prev => [...prev, {
+                  role: 'assistant',
+                  content: '❌ Failed to transcribe audio. Please try again.'
+                }]);
+              }
+            } catch (error) {
+              console.error('Voice transcription error:', error);
+              setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: '❌ Error connecting to voice service. Please ensure the backend is running.'
+              }]);
+            }
+          };
+
+          // Stop all tracks
+          stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+      } catch (error) {
+        console.error('Microphone access error:', error);
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: '❌ Could not access microphone. Please grant microphone permissions.'
+        }]);
+      }
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
 
@@ -406,8 +498,13 @@ export default function Assistant() {
             />
 
             <button
-              onClick={() => console.log('Voice input')}
-              className="p-2 rounded-lg text-gray-400 hover:text-blue-400 hover:bg-white/5 transition-all duration-200"
+              onClick={handleVoiceInput}
+              className={`p-2 rounded-lg transition-all duration-200 ${
+                isRecording 
+                  ? 'bg-red-500 text-white animate-pulse' 
+                  : 'text-gray-400 hover:text-blue-400 hover:bg-white/5'
+              }`}
+              title={isRecording ? 'Stop recording' : 'Start voice input'}
             >
               <Mic className="w-5 h-5" />
             </button>
