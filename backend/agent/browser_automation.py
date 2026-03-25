@@ -17,14 +17,26 @@ class BrowserAutomation:
         self.cdp_port = 9222
     
     def find_chrome_path(self) -> Optional[str]:
-        """Find Chrome executable path on Windows"""
-        possible_paths = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
-            os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
-            os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
-        ]
+        """Find Chrome/Chromium executable path across platforms"""
+        import platform
+        
+        system = platform.system()
+        
+        if system == "Windows":
+            possible_paths = [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            ]
+        elif system == "Darwin":  # macOS
+            possible_paths = [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            ]
+        else:  # Linux
+            possible_paths = [
+                "/usr/bin/google-chrome",
+                "/usr/bin/chromium",
+                "/snap/bin/chromium",
+            ]
         
         for path in possible_paths:
             if os.path.exists(path):
