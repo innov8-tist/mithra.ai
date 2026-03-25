@@ -150,11 +150,9 @@ async def autofill_service(request: AutofillRequest):
     """
     Autofill endpoint that:
     1. Matches user query to a service (navigation)
-    2. Launches browser and navigates to the service link
-    3. Returns page info for autofill
+    2. Returns the service link (frontend will open CDP browser)
     """
     from agent.navigation_agent import navigate_to_service
-    from agent.browser_automation import launch_and_navigate
     
     # Get the service link based on query
     navigation_result = await navigate_to_service(request.query)
@@ -162,14 +160,10 @@ async def autofill_service(request: AutofillRequest):
     if navigation_result.get("success"):
         service_link = navigation_result["link"]
         
-        # Launch browser and navigate (synchronous)
-        browser_result = launch_and_navigate(service_link, headless=False)
-        
         return {
-            "success": browser_result["success"],
+            "success": True,
             "link": service_link,
-            "cdp_port": browser_result.get("cdp_port"),
-            "message": browser_result.get("message"),
+            "message": "Service found. Frontend will open CDP browser.",
             "query": request.query
         }
     else:

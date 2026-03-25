@@ -482,13 +482,25 @@ async fn fill_form_fields(fill_data: Vec<Value>) -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+async fn navigate_to_url(url: String) -> Result<String, String> {
+    let ws_url = get_page_ws_url().await?;
+    
+    send_cdp_command(&ws_url, "Page.navigate", json!({
+        "url": url
+    })).await?;
+    
+    Ok(format!("Navigated to {}", url))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             greet, 
-            launch_chrome_with_cdp, 
+            launch_chrome_with_cdp,
+            navigate_to_url,
             get_current_tab_url, 
             capture_screenshot, 
             extract_form_fields, 

@@ -53,7 +53,7 @@ export default function Assistant() {
 
   const handleSend = async () => {
     if (!message.trim()) return;
-    
+
     const userMessage = message;
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setMessage('');
@@ -71,31 +71,31 @@ export default function Assistant() {
 
         if (response.ok) {
           const data = await response.json();
-          
+
           // Parse the response - check multiple possible fields
           const responseText = data.data || data.result || data.response || data.answer || 'No response received';
-          
-          setMessages(prev => [...prev, { 
-            role: 'assistant', 
+
+          setMessages(prev => [...prev, {
+            role: 'assistant',
             content: responseText
           }]);
         } else {
-          setMessages(prev => [...prev, { 
-            role: 'assistant', 
+          setMessages(prev => [...prev, {
+            role: 'assistant',
             content: 'Sorry, I encountered an error. Please try again.'
           }]);
         }
       } catch (error) {
         console.error('Query failed:', error);
-        setMessages(prev => [...prev, { 
-          role: 'assistant', 
+        setMessages(prev => [...prev, {
+          role: 'assistant',
           content: 'Failed to connect to the server. Please ensure the backend is running.'
         }]);
       } finally {
         setIsLoading(false);
       }
     } else {
-      // AutoFill mode - call autofill API
+      // AutoFill mode - call autofill API then open browser with Tauri
       setIsLoading(true);
       try {
         const response = await fetch(`${API_BASE_URL}/autofill`, {
@@ -108,28 +108,125 @@ export default function Assistant() {
 
         if (response.ok) {
           const data = await response.json();
-          
+
           if (data.success) {
-            setMessages(prev => [...prev, { 
-              role: 'assistant', 
-              content: `✓ Browser launched successfully!\n\n🌐 Navigated to: ${data.link}\n\n🔌 CDP Port: ${data.cdp_port}\n\nThe browser is now open and ready for autofill. You can now use the extension to fill the form.`
+            // Show success message
+            setMessages(prev => [...prev, {
+              role: 'assistant',
+              content: `✓ Found service: ${data.link}\n\nOpening CDP browser...`
             }]);
+
+            // Import Tauri invoke
+            const { invoke } = await import('@tauri-apps/api/core');
+
+            try {
+              // Launch Chrome with CDP
+              await invoke('launch_chrome_with_cdp');
+
+              // Wait for Chrome to start
+              await new Promise(resolve => setTimeout(resolve, 5000));
+
+              // Navigate to the service URL
+              await invoke('navigate_to_url', { url: data.link });
+
+              // Wait for page to load
+              await new Promise(resolve => setTimeout(resolve, 3000));
+
+              // Inject Magic Fill button
+              const injectionResult = await invoke<string>('inject_magic_fill_button');
+              const injectionData = JSON.parse(injectionResult);
+
+              if (injectionData.injected) {
+                setMessages(prev => [...prev, {
+                  role: 'assistant',
+                  content: `✓ CDP browser opened and navigated to:\n${data.link}\n\n✨ Magic Fill button injected! (${injectionData.fieldCount} fields detected)\n\nClick the purple Magic Fill button on the webpage to auto-fill the form.`
+                }]);
+
+                // Start monitoring for Magic Fill button clicks
+                const monitorInterval = setInterval(async () => {
+                  try {
+                    const clicked = await invoke<boolean>('check_magic_fill_clicked');
+                    if (clicked) {
+                      clearInterval(monitorInterval);
+                      
+                      setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        content: `🔄 Magic Fill button clicked! Processing form...`
+                      }]);
+
+                      // Capture screenshot
+                      const screenshotB64 = await invoke<string>('capture_screenshot');
+                      
+                      // Extract form fields
+                      const fields = await invoke<any[]>('extract_form_fields');
+                      
+                      // Send to backend for processing
+                      const response = await fetch('http://localhost:8000/vision-magicfill', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          screenshot_b64: screenshotB64,
+                          fields: fields,
+                          url: data.link,
+                        }),
+                      });
+
+                      if (response.ok) {
+                        const fillData = await response.json();
+                        if (fillData.fill_data && fillData.fill_data.length > 0) {
+                          // Fill the form
+                          const fillResult = await invoke<string>('fill_form_fields', {
+                            fillData: fillData.fill_data,
+                          });
+                          
+                          setMessages(prev => [...prev, {
+                            role: 'assistant',
+                            content: `✅ ${fillResult}`
+                          }]);
+                        } else {
+                          setMessages(prev => [...prev, {
+                            role: 'assistant',
+                            content: `⚠️ No matching data found in your documents`
+                          }]);
+                        }
+                      }
+                    }
+                  } catch (error) {
+                    // Silently ignore errors during monitoring
+                  }
+                }, 500);
+
+                // Stop monitoring after 5 minutes
+                setTimeout(() => clearInterval(monitorInterval), 300000);
+              } else {
+                setMessages(prev => [...prev, {
+                  role: 'assistant',
+                  content: `✓ Navigated to: ${data.link}\n\nNo forms detected on this page. The Magic Fill button will appear when you navigate to a page with forms.`
+                }]);
+              }
+            } catch (tauriError) {
+              console.error('CDP browser launch failed:', tauriError);
+              setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: `Error: ${tauriError}\n\nPlease go to Chrome Sandbox and click "Open Browser" manually.`
+              }]);
+            }
           } else {
-            setMessages(prev => [...prev, { 
-              role: 'assistant', 
-              content: `Failed to launch browser: ${data.error || 'Unknown error'}`
+            setMessages(prev => [...prev, {
+              role: 'assistant',
+              content: `Failed to find service: ${data.error || 'Unknown error'}`
             }]);
           }
         } else {
-          setMessages(prev => [...prev, { 
-            role: 'assistant', 
-            content: 'Sorry, I encountered an error launching the browser. Please try again.'
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: 'Sorry, I encountered an error. Please try again.'
           }]);
         }
       } catch (error) {
         console.error('Autofill failed:', error);
-        setMessages(prev => [...prev, { 
-          role: 'assistant', 
+        setMessages(prev => [...prev, {
+          role: 'assistant',
           content: 'Failed to connect to the server. Please ensure the backend is running.'
         }]);
       } finally {
@@ -164,11 +261,10 @@ export default function Assistant() {
 
           <button
             onClick={() => { setChatMode('autofill'); setShowModeSelector(false); }}
-            className={`w-full flex items-start gap-3 px-3 py-3 rounded-lg mb-1 transition-all duration-200 ${
-              chatMode === 'autofill'
+            className={`w-full flex items-start gap-3 px-3 py-3 rounded-lg mb-1 transition-all duration-200 ${chatMode === 'autofill'
                 ? 'bg-blue-500/20 border border-blue-500/30'
                 : 'hover:bg-white/5'
-            }`}
+              }`}
           >
             <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0">
               <Globe className="w-4 h-4 text-blue-400" />
@@ -184,11 +280,10 @@ export default function Assistant() {
 
           <button
             onClick={() => { setChatMode('advisor'); setShowModeSelector(false); }}
-            className={`w-full flex items-start gap-3 px-3 py-3 rounded-lg transition-all duration-200 ${
-              chatMode === 'advisor'
+            className={`w-full flex items-start gap-3 px-3 py-3 rounded-lg transition-all duration-200 ${chatMode === 'advisor'
                 ? 'bg-blue-500/20 border border-blue-500/30'
                 : 'hover:bg-white/5'
-            }`}
+              }`}
           >
             <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0">
               <Search className="w-4 h-4 text-blue-400" />
@@ -262,11 +357,10 @@ export default function Assistant() {
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fadeInUp`}
               >
                 <div
-                  className={`max-w-[70%] px-5 py-3 rounded-2xl whitespace-pre-wrap ${
-                    msg.role === 'user'
+                  className={`max-w-[70%] px-5 py-3 rounded-2xl whitespace-pre-wrap ${msg.role === 'user'
                       ? 'bg-blue-600 text-white'
                       : 'bg-white/5 backdrop-blur-sm border border-white/10 text-gray-200'
-                  }`}
+                    }`}
                 >
                   <MessageContent content={msg.content} />
                 </div>
@@ -284,7 +378,7 @@ export default function Assistant() {
       <div className="px-8 py-6 border-t border-white/5 backdrop-blur-sm">
         <div className="max-w-4xl mx-auto">
           <div className="flex items-center gap-3 bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl px-5 py-3 focus-within:border-blue-500/50 focus-within:shadow-[0_0_30px_rgba(59,130,246,0.15)] transition-all duration-200">
-            
+
             <button
               ref={modeButtonRef}
               onClick={() => setShowModeSelector(!showModeSelector)}
