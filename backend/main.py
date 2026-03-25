@@ -53,6 +53,7 @@ class BrowserRequest(BaseModel):
 class LiveQueryRequest(BaseModel):
     screenshot_b64: str
     query: str
+    fields: list[dict] = []  # Optional: extracted form fields for better matching
 
 
 class VoiceTranscribeRequest(BaseModel):
@@ -347,8 +348,29 @@ async def live_query(request: LiveQueryRequest):
             }
         
         from agent.live_agent import analyze_live_query
+        from agent.vision_magic_fill import analyze_with_gemini_vision
         
-        result = await analyze_live_query(request.screenshot_b64, request.query)
+        # If fields provided, enhance them with labels from Gemini Vision
+        enhanced_fields = request.fields
+        if request.fields and request.screenshot_b64:
+            print(f"Enhancing {len(request.fields)} fields with Gemini Vision labels...")
+            try:
+                vision_labels = await analyze_with_gemini_vision(request.screenshot_b64, request.fields)
+                label_map = {item["index"]: item.get("label") for item in vision_labels}
+                
+                # Merge labels into fields
+                for field in enhanced_fields:
+                    field_index = field.get("index")
+                    if field_index is not None and field_index in label_map:
+                        field["label"] = label_map[field_index]
+                        
+                print(f"Enhanced fields with labels:")
+                for field in enhanced_fields[:5]:
+                    print(f"  - {field.get('label', 'N/A')} (id: {field.get('id')})")
+            except Exception as e:
+                print(f"Warning: Could not enhance fields with labels: {e}")
+        
+        result = await analyze_live_query(request.screenshot_b64, request.query, enhanced_fields)
         
         print(f"\n{'='*60}")
         print(f"LIVE QUERY RESPONSE")
@@ -360,6 +382,8 @@ async def live_query(request: LiveQueryRequest):
             print(f"Fields ({len(result['fields'])}):")
             for field in result['fields']:
                 print(f"  - {field.get('label')}: {field.get('value')}")
+                if 'id' in field:
+                    print(f"    → ID: {field['id']}, Tag: {field.get('tag')}")
         if result.get('error'):
             print(f"Error: {result.get('error')}")
         print(f"{'='*60}\n")

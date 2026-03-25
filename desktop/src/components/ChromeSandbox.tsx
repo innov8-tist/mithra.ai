@@ -197,19 +197,25 @@ function ChromeSandbox() {
                     setLiveQueryStatus('📸 Analyzing page...');
                     const screenshotB64 = await invoke<string>('capture_screenshot');
 
+                    // Extract form fields for better matching
+                    const formFields = await invoke<any[]>('extract_form_fields');
+                    console.log('Extracted form fields for live query:', formFields.length);
+
                     // Send to live-query endpoint
                     console.log('\n' + '='.repeat(60));
                     console.log('SENDING TO LIVE QUERY ENDPOINT');
                     console.log('='.repeat(60));
                     console.log('Query:', data.translated_text);
                     console.log('Screenshot length:', screenshotB64.length, 'chars');
+                    console.log('Form fields:', formFields.length);
                     
                     const liveQueryResponse = await fetch('http://localhost:8000/live-query', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         screenshot_b64: screenshotB64,
-                        query: data.translated_text  // Use translated English text
+                        query: data.translated_text,
+                        fields: formFields  // Send extracted fields
                       })
                     });
 
@@ -233,40 +239,40 @@ function ChromeSandbox() {
                           setLiveQueryStatus(`💉 Injecting ${liveData.fields.length} fields via CDP...`);
                           
                           try {
-                            // First, extract current form fields to get IDs
-                            const formFields = await invoke<any[]>('extract_form_fields');
-                            console.log('Extracted form fields:', JSON.stringify(formFields, null, 2));
-                            
-                            // Match labels from live query to IDs from form fields
+                            // Build fill data from returned fields (already have IDs from backend)
                             const fillData: any[] = [];
                             
-                            for (const liveField of liveData.fields) {
-                              const label = liveField.label.toLowerCase().trim();
-                              const value = liveField.value;
-                              
-                              // Find matching field by label
-                              const matchingField = formFields.find((field: any) => {
-                                const fieldLabel = (field.label || '').toLowerCase().trim();
-                                const fieldName = (field.name || '').toLowerCase().trim();
-                                const fieldId = (field.id || '').toLowerCase().trim();
+                            for (const field of liveData.fields) {
+                              if (field.id) {
+                                // Backend already matched and provided ID
+                                let action = 'fill';
+                                let finalValue = field.value;
                                 
-                                // Match by label, name, or id
-                                return fieldLabel.includes(label) || 
-                                       label.includes(fieldLabel) ||
-                                       fieldName.includes(label) ||
-                                       label.includes(fieldName) ||
-                                       fieldId.includes(label);
-                              });
-                              
-                              if (matchingField && matchingField.id) {
-                                console.log(`✓ Matched "${liveField.label}" to field ID: ${matchingField.id}`);
+                                if (field.tag === 'SELECT' && field.options) {
+                                  action = 'select';
+                                  // Find matching option
+                                  const valueLower = field.value.toLowerCase();
+                                  const matchingOption = field.options.find((opt: any) => {
+                                    const optLabel = (opt.label || '').toLowerCase();
+                                    const optValue = (opt.value || '').toLowerCase();
+                                    return optLabel.includes(valueLower) || 
+                                           valueLower.includes(optLabel) ||
+                                           optValue.includes(valueLower);
+                                  });
+                                  
+                                  if (matchingOption) {
+                                    finalValue = matchingOption.value;
+                                    console.log(`SELECT: ${field.label} → ${matchingOption.label} (${finalValue})`);
+                                  }
+                                } else if (field.type === 'radio') {
+                                  action = 'click';
+                                }
+                                
                                 fillData.push({
-                                  id: matchingField.id,
-                                  value: value,
-                                  action: 'fill'
+                                  id: field.id,
+                                  value: finalValue,
+                                  action: action
                                 });
-                              } else {
-                                console.warn(`✗ Could not find field for label: ${liveField.label}`);
                               }
                             }
                             

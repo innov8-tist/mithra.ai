@@ -150,14 +150,25 @@ export default function Assistant() {
 
                 // Track recording state
                 let isRecording = false;
+                let isMagicFilling = false;
+
+                // Continuous re-injection interval (every 2 seconds)
+                const reinjectionInterval = setInterval(async () => {
+                  try {
+                    await invoke<string>('inject_magic_fill_button');
+                    await invoke<string>('inject_voice_button');
+                  } catch (error) {
+                    // Silently ignore errors
+                  }
+                }, 2000);
 
                 // Start monitoring for Magic Fill button clicks AND voice input
                 const monitorInterval = setInterval(async () => {
                   try {
                     // Check Magic Fill button
                     const clicked = await invoke<boolean>('check_magic_fill_clicked');
-                    if (clicked) {
-                      clearInterval(monitorInterval);
+                    if (clicked && !isMagicFilling) {
+                      isMagicFilling = true;
 
                       setMessages(prev => [...prev, {
                         role: 'assistant',
@@ -200,6 +211,9 @@ export default function Assistant() {
                           }]);
                         }
                       }
+                      
+                      // Reset flag after processing
+                      isMagicFilling = false;
                     }
 
                     // Check voice recording state
@@ -243,13 +257,18 @@ export default function Assistant() {
                               // Capture screenshot
                               const screenshotB64 = await invoke<string>('capture_screenshot');
 
+                              // Extract form fields for better matching
+                              const formFields = await invoke<any[]>('extract_form_fields');
+                              console.log('Extracted form fields for live query:', formFields.length);
+
                               // Send to live-query endpoint
                               const liveQueryResponse = await fetch('http://localhost:8000/live-query', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
                                   screenshot_b64: screenshotB64,
-                                  query: transcribeData.translated_text
+                                  query: transcribeData.translated_text,
+                                  fields: formFields  // Send extracted fields
                                 })
                               });
 
@@ -263,32 +282,44 @@ export default function Assistant() {
                                       content: `💉 Filling ${liveData.fields.length} fields...`
                                     }]);
 
-                                    // Extract form fields to get IDs
-                                    const formFields = await invoke<any[]>('extract_form_fields');
-
-                                    // Match labels to IDs
+                                    // Build fill data from returned fields (already have IDs from backend)
                                     const fillData: any[] = [];
-                                    for (const liveField of liveData.fields) {
-                                      const label = liveField.label.toLowerCase().trim();
-                                      const matchingField = formFields.find((field: any) => {
-                                        const fieldLabel = (field.label || '').toLowerCase().trim();
-                                        const fieldName = (field.name || '').toLowerCase().trim();
-                                        const fieldId = (field.id || '').toLowerCase().trim();
-                                        return fieldLabel.includes(label) || label.includes(fieldLabel) ||
-                                               fieldName.includes(label) || label.includes(fieldName) ||
-                                               fieldId.includes(label);
-                                      });
-
-                                      if (matchingField && matchingField.id) {
+                                    for (const field of liveData.fields) {
+                                      if (field.id) {
+                                        // Backend already matched and provided ID
+                                        let action = 'fill';
+                                        let finalValue = field.value;
+                                        
+                                        if (field.tag === 'SELECT' && field.options) {
+                                          action = 'select';
+                                          // Find matching option
+                                          const valueLower = field.value.toLowerCase();
+                                          const matchingOption = field.options.find((opt: any) => {
+                                            const optLabel = (opt.label || '').toLowerCase();
+                                            const optValue = (opt.value || '').toLowerCase();
+                                            return optLabel.includes(valueLower) || 
+                                                   valueLower.includes(optLabel) ||
+                                                   optValue.includes(valueLower);
+                                          });
+                                          
+                                          if (matchingOption) {
+                                            finalValue = matchingOption.value;
+                                            console.log(`SELECT: ${field.label} → ${matchingOption.label} (${finalValue})`);
+                                          }
+                                        } else if (field.type === 'radio') {
+                                          action = 'click';
+                                        }
+                                        
                                         fillData.push({
-                                          id: matchingField.id,
-                                          value: liveField.value,
-                                          action: 'fill'
+                                          id: field.id,
+                                          value: finalValue,
+                                          action: action
                                         });
                                       }
                                     }
 
                                     if (fillData.length > 0) {
+                                      console.log('Fill data:', JSON.stringify(fillData, null, 2));
                                       const fillResult = await invoke<string>('fill_form_fields', {
                                         fillData: fillData
                                       });
@@ -328,8 +359,11 @@ export default function Assistant() {
                   }
                 }, 500);
 
-                // Stop monitoring after 5 minutes
-                setTimeout(() => clearInterval(monitorInterval), 300000);
+                // Stop monitoring and re-injection after 5 minutes
+                setTimeout(() => {
+                  clearInterval(monitorInterval);
+                  clearInterval(reinjectionInterval);
+                }, 300000);
               } else {
                 setMessages(prev => [...prev, {
                   role: 'assistant',
