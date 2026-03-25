@@ -20,8 +20,8 @@ if GEMINI_API_KEY:
 class LiveAgentResponse(BaseModel):
     """Structured output for live agent analysis"""
     text: str = Field(description="Answer to the user's question about the screenshot. Explain what you see and respond to their query.")
-    decision: Literal["fill", "normal"] = Field(
-        description="Decision: 'fill' if user wants to autofill the form with their data, 'normal' if they just want explanation/information"
+    decision: Literal["inject", "normal"] = Field(
+        description="Decision: 'inject' if user wants to autofill/fill the form with their data (use CDP injection), 'normal' if they just want explanation/information"
     )
 
 
@@ -67,13 +67,13 @@ class LiveAgent:
 User Query: "{query}"
 
 Analyze the screenshot and decide if the user wants to:
-- "fill": Autofill the form with their personal data (keywords: "fill", "autofill", "complete", "enter my details")
-- "normal": Just explain or provide information (keywords: "what is", "explain", "tell me", "show me")
+- "inject": Autofill/fill the form with their personal data using CDP injection (keywords: "fill", "autofill", "complete", "enter my details", "fill out", "populate")
+- "normal": Just explain or provide information (keywords: "what is", "explain", "tell me", "show me", "describe")
 
 Response format:
 {{
   "text": "Brief 2-3 sentence answer",
-  "decision": "fill" or "normal"
+  "decision": "inject" or "normal"
 }}"""
 
             print(f"\nCalling Gemini Vision API...")
@@ -101,14 +101,14 @@ Response format:
             else:
                 # Fallback: analyze text for decision
                 query_lower = query.lower()
-                decision = "fill" if any(kw in query_lower for kw in ["fill", "autofill", "complete", "enter my"]) else "normal"
+                decision = "inject" if any(kw in query_lower for kw in ["fill", "autofill", "complete", "enter my", "populate"]) else "normal"
                 text = response_text
                 print(f"\nFallback Decision: {decision}")
             
-            # If decision is "fill", extract form fields and get values from RAG
-            if decision == "fill":
+            # If decision is "inject", extract form fields and get values from RAG
+            if decision == "inject":
                 print(f"\n{'='*60}")
-                print(f"EXTRACTING FORM FIELDS (Decision: fill)")
+                print(f"EXTRACTING FORM FIELDS (Decision: inject)")
                 print(f"{'='*60}")
                 fields_data = await self._extract_form_fields(image_data, query)
                 
@@ -167,22 +167,25 @@ The user is asking about a SPECIFIC field in the form.
 Your task:
 1. Identify which field the user is referring to in their query
 2. Extract ONLY that field's label
-3. Determine the field type:
+3. Check if the user provided an EXPLICIT VALUE in their query
+4. Determine the field type:
    - "personal": Personal data (name, email, phone, address, DOB, gender, etc.) - Get from user documents
    - "subjective": Opinion/preference fields (passion, hobbies, interests, why you want this, etc.) - AI generates
+   - "explicit": User explicitly stated the value in the query - USE THAT VALUE
 
 Return as JSON array with ONLY the field(s) mentioned in the query:
 [
-  {{"label": "Field Label", "field_type": "personal or subjective", "info_type": "what information is needed"}}
+  {{"label": "Field Label", "field_type": "explicit or personal or subjective", "info_type": "what information is needed", "explicit_value": "value if user stated it explicitly, otherwise null"}}
 ]
 
 Examples:
-- Query: "Can you fill the email field" → [{{"label": "Email", "field_type": "personal", "info_type": "email"}}]
-- Query: "Fill my passion" → [{{"label": "Passion", "field_type": "subjective", "info_type": "passion"}}]
-- Query: "What is my phone number" → [{{"label": "Phone", "field_type": "personal", "info_type": "phone"}}]
-- Query: "Fill why I want this job" → [{{"label": "Why do you want this job", "field_type": "subjective", "info_type": "job motivation"}}]
+- Query: "Can you fill the email field" → [{{"label": "Email", "field_type": "personal", "info_type": "email", "explicit_value": null}}]
+- Query: "My name is Naveen in this form" → [{{"label": "Name", "field_type": "explicit", "info_type": "name", "explicit_value": "Naveen"}}]
+- Query: "Fill email as john@example.com" → [{{"label": "Email", "field_type": "explicit", "info_type": "email", "explicit_value": "john@example.com"}}]
+- Query: "Enter phone number 9876543210" → [{{"label": "Phone", "field_type": "explicit", "info_type": "phone", "explicit_value": "9876543210"}}]
+- Query: "Fill my passion" → [{{"label": "Passion", "field_type": "subjective", "info_type": "passion", "explicit_value": null}}]
 
-IMPORTANT: Only return the specific field(s) mentioned in the user's query."""
+CRITICAL: If the user explicitly states a value in their query (like "my name is X", "fill Y as Z"), set field_type to "explicit" and capture that value in explicit_value."""
 
             print(f"\nCalling Gemini Vision for field extraction...")
             response = self.model.generate_content([
@@ -209,6 +212,7 @@ IMPORTANT: Only return the specific field(s) mentioned in the user's query."""
                 print(f"  - Label: {field.get('label')}")
                 print(f"    Type: {field.get('field_type')}")
                 print(f"    Info: {field.get('info_type')}")
+                print(f"    Explicit Value: {field.get('explicit_value')}")
             
             # Now get value for each field
             from agent.retriver_service import Retriver
@@ -218,10 +222,15 @@ IMPORTANT: Only return the specific field(s) mentioned in the user's query."""
                 label = field.get("label", "")
                 field_type = field.get("field_type", "personal")
                 info_type = field.get("info_type", "")
+                explicit_value = field.get("explicit_value")
                 
                 print(f"\n--- Processing field: {label} ---")
                 
-                if field_type == "personal":
+                # Priority 1: Use explicit value if provided
+                if explicit_value and field_type == "explicit":
+                    value = explicit_value
+                    print(f"Using Explicit Value: {value}")
+                elif field_type == "personal":
                     # Query RAG for personal data
                     rag_query = f"What is my {info_type}?"
                     print(f"RAG Query: {rag_query}")
